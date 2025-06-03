@@ -24,7 +24,8 @@ data class MapUiState(
     val currentFloorPlan: FloorPlan? = null,
     val navigationPath: NavigationPath? = null,
     val building: Building? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val signalStrength: com.example.indoornavigation20.positioning.SignalStrength = com.example.indoornavigation20.positioning.SignalStrength.UNAVAILABLE
 )
 
 class MapViewModel(private val context: Context? = null) : ViewModel() {
@@ -52,7 +53,13 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
         // Observe position updates
         viewModelScope.launch {
             positioningEngine.currentPosition.collect { position ->
+                val previousPosition = _uiState.value.currentPosition
                 _uiState.value = _uiState.value.copy(currentPosition = position)
+
+                // Clear navigation path when position becomes unavailable
+                if (position == null && previousPosition != null) {
+                    _uiState.value = _uiState.value.copy(navigationPath = null)
+                }
 
                 // If we have a selected POI and got a position, try to navigate
                 position?.let { pos ->
@@ -62,6 +69,13 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
                         }
                     }
                 }
+            }
+        }
+
+        // Observe signal strength updates
+        viewModelScope.launch {
+            positioningEngine.signalStrength.collect { strength ->
+                _uiState.value = _uiState.value.copy(signalStrength = strength)
             }
         }
     }
@@ -125,9 +139,16 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
             selectFloor(poi.position.floor)
         }
 
-        // Navigate to POI if current position is available
-        _uiState.value.currentPosition?.let { currentPos ->
+        // Navigate to POI if current position is available, otherwise clear navigation
+        val currentPos = _uiState.value.currentPosition
+        if (currentPos != null) {
             navigateTo(poi.position)
+        } else {
+            // Clear any existing navigation path when no position is available
+            _uiState.value = _uiState.value.copy(
+                navigationPath = null,
+                errorMessage = "Navigation not available - you are outside the building. Move inside to get directions."
+            )
         }
     }
 

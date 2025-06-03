@@ -114,7 +114,7 @@ class NavigationRepository {
 
             // Administrative Offices
             Room(
-                id = "pejabat_akademik",
+                id = "pejabot_akademik",
                 name = "Pejabot Pengurusan Akademik",
                 type = RoomType.OFFICE,
                 bounds = RoomBounds(
@@ -301,156 +301,203 @@ class NavigationRepository {
 
     private fun createCSBuildingNavigationNodes(): List<NavNode> {
         return listOf(
-            // Main entrance and central circulation
+            // Main entrance and immediate path
             NavNode(
-                "entrance_main",
-                Position(650f, 700f, 1),
-                listOf("central_lobby", "main_corridor"),
+                "main_entrance",
+                Position(650f, 834f, 1),
+                listOf("path_up_1"),
                 type = NodeType.DOOR
             ),
+
+            // Path going UP from entrance
             NavNode(
-                "central_lobby",
-                Position(650f, 650f, 1),
-                listOf("entrance_main", "laman_najib", "lift_access")
-            ),
-            NavNode(
-                "laman_najib_center",
-                Position(800f, 450f, 1),
-                listOf("central_lobby", "th4_corridor", "th5_corridor", "cafe_access")
+                "path_up_1",
+                Position(650f, 720f, 1),
+                listOf("main_entrance", "central_intersection")
             ),
 
-            // Theater Halls access points
+            // Central intersection - main hub where paths branch
+            NavNode(
+                "central_intersection",
+                Position(650f, 650f, 1),
+                listOf("path_up_1", "path_left", "path_right", "path_down_theaters")
+            ),
+
+            // Path DOWN to theaters
+            NavNode(
+                "path_down_theaters",
+                Position(650f, 750f, 1),
+                listOf("central_intersection", "th1_entrance", "th2_entrance", "th3_entrance")
+            ),
+
+            // Theater entrances
             NavNode(
                 "th1_entrance",
                 Position(444f, 737f, 1),
-                listOf("th_corridor_main"),
+                listOf("path_down_theaters"),
                 type = NodeType.DOOR
             ),
             NavNode(
                 "th2_entrance",
                 Position(560f, 737f, 1),
-                listOf("th_corridor_main"),
+                listOf("path_down_theaters"),
                 type = NodeType.DOOR
             ),
             NavNode(
                 "th3_entrance",
                 Position(680f, 737f, 1),
-                listOf("th_corridor_main"),
+                listOf("path_down_theaters"),
                 type = NodeType.DOOR
-            ),
-            NavNode(
-                "th_corridor_main",
-                Position(560f, 700f, 1),
-                listOf("th1_entrance", "th2_entrance", "th3_entrance", "central_lobby")
             ),
 
-            // Right side theater halls
+            // Path LEFT (west) to admin areas
             NavNode(
-                "th4_entrance",
-                Position(1256f, 228f, 1),
-                listOf("th4_corridor"),
-                type = NodeType.DOOR
-            ),
-            NavNode(
-                "th5_entrance",
-                Position(1256f, 130f, 1),
-                listOf("th5_corridor"),
-                type = NodeType.DOOR
-            ),
-            NavNode(
-                "th4_corridor",
-                Position(1200f, 228f, 1),
-                listOf("th4_entrance", "laman_najib_center", "unit_cawangan_access")
-            ),
-            NavNode(
-                "th5_corridor",
-                Position(1200f, 130f, 1),
-                listOf("th5_entrance", "pejabot_akademik_access")
+                "path_left",
+                Position(500f, 650f, 1),
+                listOf("central_intersection", "left_corridor")
             ),
 
-            // Administrative offices access
             NavNode(
-                "pejabot_akademik_entrance",
-                Position(700f, 113f, 1),
-                listOf("pejabot_akademik_access"),
-                type = NodeType.DOOR
+                "left_corridor",
+                Position(450f, 500f, 1),
+                listOf("path_left", "admin_area", "tandas_l_entrance", "tandas_p_entrance")
             ),
+
             NavNode(
-                "pejabot_akademik_access",
-                Position(700f, 150f, 1),
-                listOf("pejabot_akademik_entrance", "th5_corridor", "lift_access")
+                "admin_area",
+                Position(450f, 300f, 1),
+                listOf("left_corridor", "pentadbiran_entrance", "akademik_entrance")
             ),
+
+            // Admin entrances
             NavNode(
-                "pejabot_pentadbiran_entrance",
+                "pentadbiran_entrance",
                 Position(509f, 238f, 1),
-                listOf("main_corridor"),
+                listOf("admin_area"),
                 type = NodeType.DOOR
             ),
             NavNode(
-                "unit_cawangan_entrance",
-                Position(1356f, 316f, 1),
-                listOf("unit_cawangan_access"),
+                "akademik_entrance",
+                Position(700f, 113f, 1),
+                listOf("admin_area"),
                 type = NodeType.DOOR
-            ),
-            NavNode(
-                "unit_cawangan_access",
-                Position(1200f, 316f, 1),
-                listOf("unit_cawangan_entrance", "th4_corridor", "cafe_access")
             ),
 
-            // Utilities and facilities
-            NavNode(
-                "lift_entrance",
-                Position(580f, 200f, 1),
-                listOf("lift_access"),
-                type = NodeType.ELEVATOR
-            ),
-            NavNode(
-                "lift_access",
-                Position(600f, 220f, 1),
-                listOf("lift_entrance", "central_lobby", "pejabot_akademik_access")
-            ),
-            NavNode(
-                "cafe_entrance",
-                Position(1425f, 450f, 1),
-                listOf("cafe_access"),
-                type = NodeType.DOOR
-            ),
-            NavNode(
-                "cafe_access",
-                Position(1350f, 450f, 1),
-                listOf("cafe_entrance", "laman_najib_center", "unit_cawangan_access")
-            ),
-
-            // Restroom access
+            // Restroom entrances
             NavNode(
                 "tandas_l_entrance",
-                Position(425f, 350f, 1),
-                listOf("restroom_corridor"),
+                Position(425f, 470f, 1),
+                listOf("left_corridor"),
                 type = NodeType.DOOR
             ),
             NavNode(
                 "tandas_p_entrance",
                 Position(425f, 420f, 1),
-                listOf("restroom_corridor"),
+                listOf("left_corridor"),
                 type = NodeType.DOOR
             ),
+
+            // Path RIGHT - horizontal through middle (this is the key path to east side)
             NavNode(
-                "restroom_corridor",
-                Position(450f, 385f, 1),
-                listOf("tandas_l_entrance", "tandas_p_entrance", "main_corridor")
+                "path_right",
+                Position(800f, 650f, 1),
+                listOf("central_intersection", "middle_horizontal")
             ),
 
-            // Main corridors
             NavNode(
-                "main_corridor",
-                Position(550f, 450f, 1),
-                listOf(
-                    "central_lobby",
-                    "pejabot_pentadbiran_entrance",
-                    "restroom_corridor",
-                    "laman_najib_center"
-                )
+                "middle_horizontal",
+                Position(1000f, 650f, 1),
+                listOf("path_right", "right_intersection")
+            ),
+
+            NavNode(
+                "right_intersection",
+                Position(1200f, 650f, 1),
+                listOf("middle_horizontal", "right_up", "right_down", "cafe_path")
+            ),
+
+            // Path UP on right side (to TH5 and Unit Cawangan)
+            NavNode(
+                "right_up",
+                Position(1200f, 400f, 1),
+                listOf("right_intersection", "th5_corridor", "unit_cawangan_corridor")
+            ),
+
+            NavNode(
+                "th5_corridor",
+                Position(1200f, 250f, 1),
+                listOf("right_up", "th5_entrance")
+            ),
+            NavNode(
+                "th5_entrance",
+                Position(1356f, 222f, 1),
+                listOf("th5_corridor"),
+                type = NodeType.DOOR
+            ),
+
+            NavNode(
+                "unit_cawangan_corridor",
+                Position(1200f, 150f, 1),
+                listOf("right_up", "unit_cawangan_entrance")
+            ),
+            NavNode(
+                "unit_cawangan_entrance",
+                Position(1356f, 131f, 1),
+                listOf("unit_cawangan_corridor"),
+                type = NodeType.DOOR
+            ),
+
+            // Path DOWN on right side (to TH4) - THIS IS THE CRITICAL PATH
+            NavNode(
+                "right_down",
+                Position(1200f, 500f, 1),
+                listOf("right_intersection", "th4_corridor")
+            ),
+
+            NavNode(
+                "th4_corridor",
+                Position(1200f, 350f, 1),
+                listOf("right_down", "th4_entrance")
+            ),
+            NavNode(
+                "th4_entrance",
+                Position(1356f, 317f, 1),
+                listOf("th4_corridor"),
+                type = NodeType.DOOR
+            ),
+
+            // Cafe path (curves from right intersection)
+            NavNode(
+                "cafe_path",
+                Position(1350f, 600f, 1),
+                listOf("right_intersection", "cafe_entrance")
+            ),
+            NavNode(
+                "cafe_entrance",
+                Position(1444f, 516f, 1),
+                listOf("cafe_path"),
+                type = NodeType.DOOR
+            ),
+
+            // Lift access (from middle area)
+            NavNode(
+                "lift_corridor",
+                Position(650f, 400f, 1),
+                listOf("path_right", "lift_entrance")
+            ),
+            NavNode(
+                "lift_entrance",
+                Position(695f, 276f, 1),
+                listOf("lift_corridor"),
+                type = NodeType.ELEVATOR
+            ),
+
+            // Laman Najib center (accessible from middle)
+            NavNode(
+                "laman_najib_center",
+                Position(800f, 450f, 1),
+                listOf("path_right"),
+                type = NodeType.WALKWAY
             )
         )
     }
@@ -573,6 +620,13 @@ class NavigationRepository {
                     description = "Primary building entrance",
                     category = POICategory.ENTRANCE,
                     position = Position(x = 650f, y = 700f, floor = 1)
+                ),
+                PointOfInterest(
+                    id = "east_entrance_poi",
+                    name = "East Entrance",
+                    description = "Secondary entrance from east side",
+                    category = POICategory.ENTRANCE,
+                    position = Position(x = 600f, y = 700f, floor = 1)
                 )
             )
 

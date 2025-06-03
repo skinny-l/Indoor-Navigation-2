@@ -13,12 +13,15 @@ class PositioningEngine(private val context: Context? = null) {
     private val _currentPosition = MutableStateFlow<Position?>(null)
     val currentPosition: StateFlow<Position?> = _currentPosition
 
-    private val _positioningMode = MutableStateFlow<PositioningMode>(PositioningMode.MOCK)
+    private val _positioningMode = MutableStateFlow<PositioningMode>(PositioningMode.INDOOR_ONLY)
     val positioningMode: StateFlow<PositioningMode> = _positioningMode
 
     private val _positioningStatus = MutableStateFlow<PositioningStatus>(PositioningStatus.IDLE)
-    val positioningStatusPublic: StateFlow<PositioningStatus> =
-        _positioningStatus // Renamed for clarity if needed, or use as is
+    val positioningStatusPublic: StateFlow<PositioningStatus> = _positioningStatus
+
+    // Signal strength indicator for UI
+    private val _signalStrength = MutableStateFlow<SignalStrength>(SignalStrength.UNAVAILABLE)
+    val signalStrength: StateFlow<SignalStrength> = _signalStrength
 
     // Internal MutableStateFlow for beacons used in positioning
     private val _beaconsUsedInLastPositioningInternal =
@@ -27,7 +30,6 @@ class PositioningEngine(private val context: Context? = null) {
     // Publicly exposed StateFlow for UI collection
     val beaconsUsedInLastPositioning: StateFlow<List<BeaconMeasurement>> =
         _beaconsUsedInLastPositioningInternal
-
 
     // Known beacons with precise positions
     private var hybridBLEService: HybridPositioningService? = null
@@ -43,110 +45,102 @@ class PositioningEngine(private val context: Context? = null) {
             // Observe BLE positioning and used beacons
             CoroutineScope(Dispatchers.Main).launch {
                 hybridBLEService?.currentPosition?.collect { blePosition ->
-                    updateFusedPosition(blePosition, wifiService?.wifiPosition?.value)
+                    updateIndoorPosition(blePosition)
                 }
             }
             CoroutineScope(Dispatchers.Main).launch {
                 hybridBLEService?.positioningStatus?.collect { status ->
                     _positioningStatus.value = status
+                    updateSignalStrength(status)
                 }
             }
             CoroutineScope(Dispatchers.Main).launch {
                 hybridBLEService?.beaconsUsedInLastPositioning?.collect { beacons ->
                     _beaconsUsedInLastPositioningInternal.value = beacons
+                    updateSignalStrengthFromBeacons(beacons)
                 }
             }
-
-            // Observe WiFi positioning
         }
     }
 
     fun startPositioning() {
         if (useRealServices && hybridBLEService != null) {
-            // Always try BLE first - it should work if there are any Bluetooth devices around
+            _positioningMode.value = PositioningMode.INDOOR_ONLY
+
             val bleScanStarted = hybridBLEService!!.startScanning()
 
             if (bleScanStarted) {
-                _positioningMode.value = PositioningMode.HYBRID
-
-                // Observe BLE positioning
                 CoroutineScope(Dispatchers.Main).launch {
                     hybridBLEService!!.currentPosition.collect { blePosition ->
-                        if (blePosition != null) {
-                            // We got a real BLE position, use it
-                            _currentPosition.value = blePosition
-                        } else {
-                            // No BLE position yet, but keep scanning - don't fall back to mock immediately
-                            // Only show mock if we haven't gotten any real position after some time
-                            kotlinx.coroutines.delay(10000) // Wait 10 seconds
-                            if (_currentPosition.value == null) {
-                                startMockPositioning() // Fallback after waiting
-                            }
-                        }
-                    }
-                }
-
-                // Also try WiFi positioning if available
-                wifiService?.let { wifi ->
-                    val wifiScanStarted = wifi.startWiFiScanning()
-                    if (wifiScanStarted) {
-                        _positioningMode.value = PositioningMode.HYBRID_WIFI
-
-                        CoroutineScope(Dispatchers.Main).launch {
-                            wifi.wifiPosition.collect { wifiPosition ->
-                                val blePos = hybridBLEService?.currentPosition?.value
-                                updateFusedPosition(blePos, wifiPosition)
-                            }
-                        }
-
-                        // Regularly trigger WiFi scan for updates
-                        CoroutineScope(Dispatchers.Main).launch {
-                            while (true) {
-                                kotlinx.coroutines.delay(5000) // Scan WiFi every 5 seconds
-                                wifi.scanWiFiAccessPoints()
-                            }
-                        }
+                        updateIndoorPosition(blePosition)
                     }
                 }
             } else {
-                // BLE scanning failed to start, fall back to mock
-                startMockPositioning()
+                _positioningStatus.value = PositioningStatus.ERROR
+                _signalStrength.value = SignalStrength.UNAVAILABLE
             }
         } else {
-            startMockPositioning()
+            _positioningStatus.value = PositioningStatus.ERROR
+            _signalStrength.value = SignalStrength.UNAVAILABLE
         }
     }
 
-    private fun updateFusedPosition(blePos: Position?, wifiPos: Position?) {
-        val finalPosition = when {
-            blePos != null && wifiPos != null -> {
-                // Fuse BLE and WiFi positions (simple averaging for now)
-                // More sophisticated fusion (Kalman filter) could be added here
-                Position(
-                    x = (blePos.x + wifiPos.x) / 2,
-                    y = (blePos.y + wifiPos.y) / 2,
-                    floor = blePos.floor, // Assume same floor or implement floor fusion
-                    accuracy = minOf(blePos.accuracy, wifiPos.accuracy) / 1.5f, // Enhanced accuracy
-                    timestamp = System.currentTimeMillis()
-                )
+    private fun updateIndoorPosition(blePosition: Position?) {
+        if (blePosition != null && isValidIndoorPosition(blePosition)) {
+            _currentPosition.value = blePosition
+        } else {
+            // Clear position when outside or insufficient signals
+            _currentPosition.value = null
+        }
+    }
+
+    private fun isValidIndoorPosition(position: Position): Boolean {
+        // Only show position if we have high confidence (accuracy <= 5m)
+        // This ensures we're likely inside the building with good beacon coverage
+        return position.accuracy <= 5.0f
+    }
+
+    private fun updateSignalStrength(status: PositioningStatus) {
+        _signalStrength.value = when (status) {
+            PositioningStatus.POSITIONED -> {
+                val currentPos = _currentPosition.value
+                when {
+                    currentPos?.accuracy != null && currentPos.accuracy <= 2.0f -> SignalStrength.EXCELLENT
+                    currentPos?.accuracy != null && currentPos.accuracy <= 4.0f -> SignalStrength.GOOD
+                    currentPos?.accuracy != null && currentPos.accuracy <= 6.0f -> SignalStrength.FAIR
+                    else -> SignalStrength.POOR
+                }
             }
-
-            blePos != null -> blePos
-            wifiPos != null -> wifiPos
-            else -> null
+            PositioningStatus.SCANNING -> SignalStrength.SEARCHING
+            PositioningStatus.INSUFFICIENT_SIGNALS -> SignalStrength.POOR
+            PositioningStatus.ERROR -> SignalStrength.UNAVAILABLE
+            PositioningStatus.IDLE -> SignalStrength.UNAVAILABLE
         }
-
-        _currentPosition.value = finalPosition
     }
 
-    private fun startMockPositioning() {
-        _positioningMode.value = PositioningMode.MOCK
-        _currentPosition.value = Position(x = 250f, y = 300f, floor = 1, accuracy = 2.5f)
+    private fun updateSignalStrengthFromBeacons(beacons: List<BeaconMeasurement>) {
+        if (beacons.isEmpty()) {
+            _signalStrength.value = SignalStrength.UNAVAILABLE
+            return
+        }
+
+        val knownBeaconsCount =
+            beacons.count { hybridBLEService?.isBeaconKnown(it.beacon.macAddress) == true }
+        val averageRssi = beacons.map { it.rssi }.average()
+
+        _signalStrength.value = when {
+            knownBeaconsCount >= 4 && averageRssi >= -50 -> SignalStrength.EXCELLENT
+            knownBeaconsCount >= 3 && averageRssi >= -60 -> SignalStrength.GOOD
+            knownBeaconsCount >= 2 && averageRssi >= -70 -> SignalStrength.FAIR
+            knownBeaconsCount >= 1 -> SignalStrength.POOR
+            else -> SignalStrength.UNAVAILABLE
+        }
     }
 
     fun stopPositioning() {
         hybridBLEService?.stopScanning()
-        // WiFi scanning stops automatically, or manage explicitly if needed
+        _currentPosition.value = null
+        _signalStrength.value = SignalStrength.UNAVAILABLE
     }
 
     fun addKnownBeacon(beacon: Beacon) {
@@ -173,7 +167,6 @@ class PositioningEngine(private val context: Context? = null) {
 
     // Expose Positioning Status as a Flow
     fun getPositioningStatusFlow(): StateFlow<PositioningStatus> {
-        // Directly return the engine's status flow, which is updated from HybridPositioningService
         return positioningStatusPublic
     }
 
@@ -259,9 +252,18 @@ class PositioningEngine(private val context: Context? = null) {
 }
 
 enum class PositioningMode {
-    MOCK,           // Demo positioning with fake data
+    INDOOR_ONLY,    // Real positioning inside building only
     HYBRID,         // Real positioning with beacons + public BLE
     BEACONS_ONLY,   // Only known beacons (fallback)
     WIFI_ONLY,      // Only WiFi positioning
     HYBRID_WIFI     // Real positioning with BLE beacons + Public BLE + WiFi APs
+}
+
+enum class SignalStrength {
+    EXCELLENT,      // 4+ beacons, very strong signal
+    GOOD,           // 3+ beacons, good signal
+    FAIR,           // 2+ beacons, fair signal
+    POOR,           // 1 beacon or weak signal
+    SEARCHING,      // Scanning for beacons
+    UNAVAILABLE     // No beacons detected or outside building
 }

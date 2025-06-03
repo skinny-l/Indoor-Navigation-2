@@ -3,17 +3,22 @@ package com.example.indoornavigation20.presentation.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.indoornavigation20.presentation.components.FloorPlanViewer
 import com.example.indoornavigation20.presentation.viewmodel.MapViewModel
+import com.example.indoornavigation20.positioning.SignalStrength
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -204,18 +209,30 @@ fun MapScreen(
                     }
                 }
             } else {
-                FloorPlanViewer(
-                    floorPlan = uiState.currentFloorPlan,
-                    currentPosition = uiState.currentPosition,
-                    selectedPOI = uiState.selectedPOI,
-                    pointsOfInterest = uiState.searchResults,
-                    navigationPath = uiState.navigationPath,
-                    onPOIClick = { poi -> viewModel.selectPOI(poi) },
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .weight(1f)
                         .padding(16.dp)
-                )
+                ) {
+                    FloorPlanViewer(
+                        floorPlan = uiState.currentFloorPlan,
+                        currentPosition = uiState.currentPosition,
+                        selectedPOI = uiState.selectedPOI,
+                        pointsOfInterest = uiState.searchResults,
+                        navigationPath = uiState.navigationPath,
+                        onPOIClick = { poi -> viewModel.selectPOI(poi) },
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Signal strength indicator in top-right corner
+                    SignalStrengthIndicator(
+                        signalStrength = uiState.signalStrength,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                    )
+                }
             }
 
             // Error message
@@ -287,5 +304,79 @@ fun MapScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun SignalStrengthIndicator(
+    signalStrength: SignalStrength,
+    modifier: Modifier = Modifier
+) {
+    val (color, icon, description) = when (signalStrength) {
+        SignalStrength.EXCELLENT -> Triple(
+            Color(0xFF4CAF50),
+            Icons.Default.SignalWifi4Bar,
+            "Excellent signal"
+        )
+
+        SignalStrength.GOOD -> Triple(
+            Color(0xFF8BC34A),
+            Icons.Default.Wifi,
+            "Good signal"
+        )
+
+        SignalStrength.FAIR -> Triple(
+            Color(0xFFFF9800),
+            Icons.Default.WifiTethering,
+            "Fair signal"
+        )
+
+        SignalStrength.POOR -> Triple(
+            Color(0xFFFF5722),
+            Icons.Default.WifiTetheringOff,
+            "Poor signal"
+        )
+
+        SignalStrength.SEARCHING -> Triple(
+            Color(0xFF9E9E9E),
+            Icons.Default.WifiFind,
+            "Searching..."
+        )
+
+        SignalStrength.UNAVAILABLE -> Triple(
+            Color(0xFF757575),
+            Icons.Default.SignalWifiOff,
+            "No signal"
+        )
+    }
+
+    Row(
+        modifier = modifier
+            .background(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                shape = MaterialTheme.shapes.small
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = description,
+            tint = color,
+            modifier = Modifier.size(16.dp)
+        )
+        Text(
+            text = when (signalStrength) {
+                SignalStrength.EXCELLENT -> "Excellent"
+                SignalStrength.GOOD -> "Good"
+                SignalStrength.FAIR -> "Fair"
+                SignalStrength.POOR -> "Poor"
+                SignalStrength.SEARCHING -> "Searching"
+                SignalStrength.UNAVAILABLE -> "No Signal"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = color
+        )
     }
 }

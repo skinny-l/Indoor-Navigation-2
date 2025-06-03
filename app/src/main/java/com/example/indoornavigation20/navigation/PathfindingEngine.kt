@@ -27,13 +27,20 @@ class PathfindingEngine {
         goal: Position,
         floorPlan: FloorPlan
     ): List<Position> {
+        println("🗺️ PathfindingEngine: Finding path from (${start.x}, ${start.y}) to (${goal.x}, ${goal.y})")
+        println("🗺️ Available nodes: ${floorPlan.nodes.size}")
+
         if (floorPlan.nodes.isEmpty()) {
+            println("⚠️ No navigation nodes found, using direct path")
             // If no navigation nodes, return direct path (fallback)
             return listOf(start, goal)
         }
 
         val startNode = findNearestNode(start, floorPlan.nodes)
         val goalNode = findNearestNode(goal, floorPlan.nodes)
+
+        println("🗺️ Start node: ${startNode.id} at (${startNode.position.x}, ${startNode.position.y})")
+        println("🗺️ Goal node: ${goalNode.id} at (${goalNode.position.x}, ${goalNode.position.y})")
 
         val openList = PriorityQueue<AStarNode>(compareBy { it.fCost })
         val closedList = mutableSetOf<String>()
@@ -54,6 +61,7 @@ class PathfindingEngine {
 
             if (current.node.id == goalNode.id) {
                 val nodePath = reconstructPath(current)
+                println("✅ Path found through ${nodePath.size} nodes: ${nodePath.map { it.id }}")
                 return buildFullPath(start, goal, nodePath)
             }
 
@@ -79,6 +87,7 @@ class PathfindingEngine {
             }
         }
 
+        println("❌ No path found through nodes, using direct path")
         // If no path found through nodes, return direct path
         return listOf(start, goal)
     }
