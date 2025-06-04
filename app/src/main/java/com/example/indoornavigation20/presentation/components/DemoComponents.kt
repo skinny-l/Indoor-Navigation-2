@@ -103,7 +103,8 @@ private fun POIChip(
                             POICategory.ELEVATOR -> Color(0xFF2196F3)
                             POICategory.STAIRS -> Color(0xFFFF9800)
                             POICategory.ENTRANCE -> Color(0xFF4CAF50)
-                            POICategory.EMERGENCY_EXIT -> Color(0xFFF44336)
+                            POICategory.EXIT -> Color(0xFFF44336)       // Corrected: Using EXIT
+                            // POICategory.EMERGENCY_EXIT -> Color(0xFFF44336) // Old line that was causing error
                             else -> Color(0xFF607D8B)
                         }
                     )
@@ -181,7 +182,8 @@ private fun DrawScope.drawPOI(poi: PointOfInterest, canvasSize: androidx.compose
         POICategory.ELEVATOR -> Color(0xFF2196F3)
         POICategory.STAIRS -> Color(0xFFFF9800)
         POICategory.ENTRANCE -> Color(0xFF4CAF50)
-        POICategory.EMERGENCY_EXIT -> Color(0xFFF44336)
+        POICategory.EXIT -> Color(0xFFF44336)       // Corrected: Using EXIT
+        // POICategory.EMERGENCY_EXIT -> Color(0xFFF44336) // Old line that was causing error
         else -> Color(0xFF607D8B)
     }
 

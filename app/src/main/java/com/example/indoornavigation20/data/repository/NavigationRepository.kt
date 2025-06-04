@@ -24,9 +24,8 @@ class NavigationRepository {
     }
 
     private fun createComputerScienceBuildingGroundFloor(): FloorPlan {
-        // SVG viewport is 1550.9 x 835.2, building is 75m x 30m
-        val metersPerPixelX = 75.0f / 1550.9f
-        val metersPerPixelY = 30.0f / 835.2f
+        val metersPerPixelX = 75.0f / 1165.149f
+        val metersPerPixelY = 30.0f / 760.814f
 
         val coordinateSystem = CoordinateSystem(
             originLatitude = 3.071421,
@@ -40,10 +39,10 @@ class NavigationRepository {
             buildingId = "computer_science_building",
             floorNumber = 1,
             name = "Computer Science Building - Ground Floor",
-            imageUrl = "android.resource://com.example.indoornavigation20/drawable/ground_floor",
-            svgUrl = "android.resource://com.example.indoornavigation20/drawable/ground_floor",
-            width = 1550.9f,
-            height = 835.2f,
+            imageUrl = "android.resource://com.example.indoornavigation20/drawable/plain_svg",
+            svgUrl = "android.resource://com.example.indoornavigation20/drawable/plain_svg",
+            width = 1165.149f,
+            height = 760.814f,
             nodes = createCSBuildingNavigationNodes(),
             rooms = createCSBuildingRooms(),
             walls = createCSBuildingWalls(),
@@ -300,205 +299,345 @@ class NavigationRepository {
     }
 
     private fun createCSBuildingNavigationNodes(): List<NavNode> {
+        // All coordinates are NEW ESTIMATES based on visual alignment with:
+        // 1. User's blue line drawing ("20-56-...png")
+        // 2. User's cleaner POI map ("new_map_layout.png")
+        // 3. Target canvas dimensions: 1165.149f (width) x 760.814f (height)
+        // The node IDs and general connection structure are from the user's last provided NavNode list.
+
         return listOf(
-            // Main entrance and immediate path
+            // === ENTRANCES (Green) ===
+            // West Entrance (bottom-left of overall structure on blue line map)
             NavNode(
-                "main_entrance",
-                Position(650f, 834f, 1),
-                listOf("path_up_1"),
+                id = "ENTRANCE_WEST",
+                position = Position(80f, 560f, 1),
+                connections = listOf("W_CORRIDOR_1"),
+                type = NodeType.DOOR
+            ),
+            // Main South Entrance (bottom-center on blue line map) - THIS WILL BE DEMO START
+            NavNode(
+                id = "ENTRANCE_MAIN_SOUTH",
+                position = Position(582f, 740f, 1),
+                connections = listOf("SOUTH_CORRIDOR_1"),
+                type = NodeType.DOOR
+            ),
+            // North-East Entrance (top-right on blue line map)
+            NavNode(
+                id = "ENTRANCE_EAST",
+                position = Position(1100f, 180f, 1),
+                connections = listOf("EAST_CORRIDOR_1_FROM_ENTRANCE"),
                 type = NodeType.DOOR
             ),
 
-            // Path going UP from entrance
+            // === SOUTH CORRIDOR (from main entrance northwards, then west to theaters) ===
             NavNode(
-                "path_up_1",
-                Position(650f, 720f, 1),
-                listOf("main_entrance", "central_intersection")
+                id = "SOUTH_CORRIDOR_1",
+                position = Position(582f, 680f, 1),
+                connections = listOf("ENTRANCE_MAIN_SOUTH", "SOUTH_CORRIDOR_2")
+            ),
+            NavNode(
+                id = "SOUTH_CORRIDOR_2",
+                position = Position(582f, 620f, 1),
+                connections = listOf(
+                    "SOUTH_CORRIDOR_1",
+                    "TH_HALL_CORRIDOR_EAST_END",
+                    "CENTRAL_JUNCTION_SOUTH_POINT"
+                )
             ),
 
-            // Central intersection - main hub where paths branch
+            // === THEATER HALLS CORRIDOR (runs west from SOUTH_CORRIDOR_2) ===
             NavNode(
-                "central_intersection",
-                Position(650f, 650f, 1),
-                listOf("path_up_1", "path_left", "path_right", "path_down_theaters")
+                id = "TH_HALL_CORRIDOR_EAST_END",
+                position = Position(500f, 620f, 1),
+                connections = listOf("SOUTH_CORRIDOR_2", "TH3_DOOR_NODE", "TH_HALL_CORRIDOR_MID")
             ),
-
-            // Path DOWN to theaters
             NavNode(
-                "path_down_theaters",
-                Position(650f, 750f, 1),
-                listOf("central_intersection", "th1_entrance", "th2_entrance", "th3_entrance")
-            ),
-
-            // Theater entrances
-            NavNode(
-                "th1_entrance",
-                Position(444f, 737f, 1),
-                listOf("path_down_theaters"),
+                id = "TH3_DOOR_NODE",
+                position = Position(500f, 670f, 1),
+                connections = listOf("TH_HALL_CORRIDOR_EAST_END"),
                 type = NodeType.DOOR
+            ), // TH3 (est based on relative pos)
+            NavNode(
+                id = "TH_HALL_CORRIDOR_MID",
+                position = Position(380f, 620f, 1),
+                connections = listOf(
+                    "TH_HALL_CORRIDOR_EAST_END",
+                    "TH2_DOOR_NODE",
+                    "TH_HALL_CORRIDOR_WEST_END"
+                )
             ),
             NavNode(
-                "th2_entrance",
-                Position(560f, 737f, 1),
-                listOf("path_down_theaters"),
+                id = "TH2_DOOR_NODE",
+                position = Position(380f, 670f, 1),
+                connections = listOf("TH_HALL_CORRIDOR_MID"),
                 type = NodeType.DOOR
+            ),    // TH2 (est)
+            NavNode(
+                id = "TH_HALL_CORRIDOR_WEST_END",
+                position = Position(250f, 620f, 1),
+                connections = listOf(
+                    "TH_HALL_CORRIDOR_MID",
+                    "TH1_DOOR_NODE",
+                    "W_CORRIDOR_JUNCTION_SOUTH"
+                )
             ),
             NavNode(
-                "th3_entrance",
-                Position(680f, 737f, 1),
-                listOf("path_down_theaters"),
+                id = "TH1_DOOR_NODE",
+                position = Position(250f, 670f, 1),
+                connections = listOf("TH_HALL_CORRIDOR_WEST_END"),
                 type = NodeType.DOOR
-            ),
+            ),    // TH1 (est)
 
-            // Path LEFT (west) to admin areas
+            // === WEST CORRIDOR (from ENTRANCE_WEST northwards, then east) ===
             NavNode(
-                "path_left",
-                Position(500f, 650f, 1),
-                listOf("central_intersection", "left_corridor")
+                id = "W_CORRIDOR_1",
+                position = Position(150f, 560f, 1),
+                connections = listOf("ENTRANCE_WEST", "W_CORRIDOR_JUNCTION_SOUTH")
+            ), // Path from west entrance
+            NavNode(
+                id = "W_CORRIDOR_JUNCTION_SOUTH",
+                position = Position(250f, 560f, 1),
+                connections = listOf(
+                    "W_CORRIDOR_1",
+                    "TH_HALL_CORRIDOR_WEST_END",
+                    "PENTADBIRAN_ACCESS_CORRIDOR"
+                )
             ),
-
             NavNode(
-                "left_corridor",
-                Position(450f, 500f, 1),
-                listOf("path_left", "admin_area", "tandas_l_entrance", "tandas_p_entrance")
+                id = "PENTADBIRAN_ACCESS_CORRIDOR",
+                position = Position(250f, 400f, 1),
+                connections = listOf(
+                    "W_CORRIDOR_JUNCTION_SOUTH",
+                    "PENTADBIRAN_DOOR_NODE",
+                    "TANDAS_L_DOOR_NODE"
+                )
             ),
-
             NavNode(
-                "admin_area",
-                Position(450f, 300f, 1),
-                listOf("left_corridor", "pentadbiran_entrance", "akademik_entrance")
-            ),
-
-            // Admin entrances
-            NavNode(
-                "pentadbiran_entrance",
-                Position(509f, 238f, 1),
-                listOf("admin_area"),
+                id = "PENTADBIRAN_DOOR_NODE",
+                position = Position(250f, 270f, 1),
+                connections = listOf("PENTADBIRAN_ACCESS_CORRIDOR"),
                 type = NodeType.DOOR
-            ),
+            ), // Pejabot Pentadbiran
             NavNode(
-                "akademik_entrance",
-                Position(700f, 113f, 1),
-                listOf("admin_area"),
+                id = "TANDAS_L_DOOR_NODE",
+                position = Position(250f, 470f, 1),
+                connections = listOf("PENTADBIRAN_ACCESS_CORRIDOR"),
                 type = NodeType.DOOR
-            ),
+            ), // Tandas L
 
-            // Restroom entrances
+            // === CENTRAL JUNCTION & Laman Najib area ===
+            // Node representing the southern approach to the central courtyard/junction area from Main South Corridor
             NavNode(
-                "tandas_l_entrance",
-                Position(425f, 470f, 1),
-                listOf("left_corridor"),
-                type = NodeType.DOOR
+                id = "CENTRAL_JUNCTION_SOUTH_POINT",
+                position = Position(582f, 500f, 1),
+                connections = listOf(
+                    "SOUTH_CORRIDOR_2",
+                    "LAMAN_NAJIB_SOUTH_NODE",
+                    "LIFT_ACCESS_CORRIDOR_SOUTH"
+                )
             ),
             NavNode(
-                "tandas_p_entrance",
-                Position(425f, 420f, 1),
-                listOf("left_corridor"),
-                type = NodeType.DOOR
-            ),
+                id = "LAMAN_NAJIB_SOUTH_NODE",
+                position = Position(582f, 430f, 1),
+                connections = listOf("CENTRAL_JUNCTION_SOUTH_POINT", "LAMAN_NAJIB_CENTER_NODE")
+            ), // Path into Laman Najib
+            NavNode(
+                id = "LAMAN_NAJIB_CENTER_NODE",
+                position = Position(582f, 380f, 1),
+                connections = listOf(
+                    "LAMAN_NAJIB_SOUTH_NODE",
+                    "LIFT_ACCESS_CORRIDOR_NORTH",
+                    "AKADEMIK_ACCESS_CORRIDOR_SOUTH"
+                )
+            ), // Center of Laman Najib
 
-            // Path RIGHT - horizontal through middle (this is the key path to east side)
+            // Lift and Paths around it (West of Laman Najib Center)
             NavNode(
-                "path_right",
-                Position(800f, 650f, 1),
-                listOf("central_intersection", "middle_horizontal")
-            ),
-
+                id = "LIFT_ACCESS_CORRIDOR_SOUTH",
+                position = Position(450f, 500f, 1),
+                connections = listOf("CENTRAL_JUNCTION_SOUTH_POINT", "LIFT_ACCESS_CORRIDOR_NORTH")
+            ), // Path on west side of Laman Najib
             NavNode(
-                "middle_horizontal",
-                Position(1000f, 650f, 1),
-                listOf("path_right", "right_intersection")
-            ),
-
-            NavNode(
-                "right_intersection",
-                Position(1200f, 650f, 1),
-                listOf("middle_horizontal", "right_up", "right_down", "cafe_path")
-            ),
-
-            // Path UP on right side (to TH5 and Unit Cawangan)
-            NavNode(
-                "right_up",
-                Position(1200f, 400f, 1),
-                listOf("right_intersection", "th5_corridor", "unit_cawangan_corridor")
-            ),
-
-            NavNode(
-                "th5_corridor",
-                Position(1200f, 250f, 1),
-                listOf("right_up", "th5_entrance")
+                id = "LIFT_ACCESS_CORRIDOR_NORTH",
+                position = Position(450f, 380f, 1),
+                connections = listOf(
+                    "LIFT_ACCESS_CORRIDOR_SOUTH",
+                    "LAMAN_NAJIB_CENTER_NODE",
+                    "LIFT_NODE"
+                )
             ),
             NavNode(
-                "th5_entrance",
-                Position(1356f, 222f, 1),
-                listOf("th5_corridor"),
-                type = NodeType.DOOR
-            ),
-
-            NavNode(
-                "unit_cawangan_corridor",
-                Position(1200f, 150f, 1),
-                listOf("right_up", "unit_cawangan_entrance")
-            ),
-            NavNode(
-                "unit_cawangan_entrance",
-                Position(1356f, 131f, 1),
-                listOf("unit_cawangan_corridor"),
-                type = NodeType.DOOR
-            ),
-
-            // Path DOWN on right side (to TH4) - THIS IS THE CRITICAL PATH
-            NavNode(
-                "right_down",
-                Position(1200f, 500f, 1),
-                listOf("right_intersection", "th4_corridor")
-            ),
-
-            NavNode(
-                "th4_corridor",
-                Position(1200f, 350f, 1),
-                listOf("right_down", "th4_entrance")
-            ),
-            NavNode(
-                "th4_entrance",
-                Position(1356f, 317f, 1),
-                listOf("th4_corridor"),
-                type = NodeType.DOOR
-            ),
-
-            // Cafe path (curves from right intersection)
-            NavNode(
-                "cafe_path",
-                Position(1350f, 600f, 1),
-                listOf("right_intersection", "cafe_entrance")
-            ),
-            NavNode(
-                "cafe_entrance",
-                Position(1444f, 516f, 1),
-                listOf("cafe_path"),
-                type = NodeType.DOOR
-            ),
-
-            // Lift access (from middle area)
-            NavNode(
-                "lift_corridor",
-                Position(650f, 400f, 1),
-                listOf("path_right", "lift_entrance")
-            ),
-            NavNode(
-                "lift_entrance",
-                Position(695f, 276f, 1),
-                listOf("lift_corridor"),
+                id = "LIFT_NODE",
+                position = Position(450f, 270f, 1),
+                connections = listOf("LIFT_ACCESS_CORRIDOR_NORTH"),
                 type = NodeType.ELEVATOR
-            ),
+            ), // RED LIFT (New visually estimated position)
 
-            // Laman Najib center (accessible from middle)
+            // Academic Offices & Tandas P (North of Laman Najib / Lift)
             NavNode(
-                "laman_najib_center",
-                Position(800f, 450f, 1),
-                listOf("path_right"),
-                type = NodeType.WALKWAY
-            )
+                id = "AKADEMIK_ACCESS_CORRIDOR_SOUTH",
+                position = Position(582f, 250f, 1),
+                connections = listOf("LAMAN_NAJIB_CENTER_NODE", "AKADEMIK_ACCESS_CORRIDOR_NORTH")
+            ),
+            NavNode(
+                id = "AKADEMIK_ACCESS_CORRIDOR_NORTH",
+                position = Position(582f, 180f, 1),
+                connections = listOf(
+                    "AKADEMIK_ACCESS_CORRIDOR_SOUTH",
+                    "AKADEMIK_DOOR_NODE",
+                    "TANDAS_P_ADMIN_DOOR_NODE",
+                    "NE_CORRIDOR_JUNCTION_WEST"
+                )
+            ),
+            NavNode(
+                id = "AKADEMIK_DOOR_NODE",
+                position = Position(582f, 100f, 1),
+                connections = listOf("AKADEMIK_ACCESS_CORRIDOR_NORTH"),
+                type = NodeType.DOOR
+            ), // Pejabot Akademik
+            NavNode(
+                id = "TANDAS_P_ADMIN_DOOR_NODE",
+                position = Position(700f, 100f, 1),
+                connections = listOf("AKADEMIK_ACCESS_CORRIDOR_NORTH"),
+                type = NodeType.DOOR
+            ), // Tandas P (Admin)
+
+            // === Path from Central Area (Laman Najib) to East Wing === 
+            // (This is the HORIZONTAL BLUE LINE running across the middle of user's drawing)
+            NavNode(
+                id = "X_TO_COURTYARD_EAST_PATH_1",
+                position = Position(800f, 620f, 1),
+                connections = listOf("CENTRAL_JUNCTION_SOUTH_POINT", "X_TO_COURTYARD_EAST_PATH_2")
+            ), // From main X, going East
+            NavNode(
+                id = "X_TO_COURTYARD_EAST_PATH_2",
+                position = Position(950f, 620f, 1),
+                connections = listOf("X_TO_COURTYARD_EAST_PATH_1", "X_TO_COURTYARD_EAST_PATH_3")
+            ),
+            NavNode(
+                id = "X_TO_COURTYARD_EAST_PATH_3",
+                position = Position(1080f, 580f, 1),
+                connections = listOf("X_TO_COURTYARD_EAST_PATH_2", "EAST_WING_VERTICAL_SOUTH_END")
+            ), // End of horizontal, before turning up into East Wing
+
+            // === East Wing Vertical Corridor & Branches ===
+            NavNode(
+                id = "EAST_WING_VERTICAL_SOUTH_END",
+                position = Position(1080f, 500f, 1),
+                connections = listOf(
+                    "X_TO_COURTYARD_EAST_PATH_3",
+                    "EAST_WING_MID_JUNCTION",
+                    "CAFE_ACCESS_PATH",
+                    "STAIRS_E_S_MID"
+                )
+            ), // Bottom of East Wing vertical
+            NavNode(
+                id = "CAFE_ACCESS_PATH",
+                position = Position(1080f, 550f, 1),
+                connections = listOf("EAST_WING_VERTICAL_SOUTH_END", "CAFE_DOOR_NODE")
+            ), // Path to Cafe
+            NavNode(
+                id = "CAFE_DOOR_NODE",
+                position = Position(1100f, 580f, 1),
+                connections = listOf("CAFE_ACCESS_PATH"),
+                type = NodeType.DOOR
+            ), // Cafe Door
+
+            NavNode(
+                id = "EAST_WING_MID_JUNCTION",
+                position = Position(1080f, 380f, 1),
+                connections = listOf(
+                    "EAST_WING_VERTICAL_SOUTH_END",
+                    "EAST_WING_VERTICAL_NORTH_END",
+                    "TH4_ACCESS_PATH"
+                )
+            ), // Mid-point of East Wing Vertical, TH4 branches West
+            NavNode(
+                id = "TH4_ACCESS_PATH",
+                position = Position(1000f, 380f, 1),
+                connections = listOf("EAST_WING_MID_JUNCTION", "TH4_DOOR_NODE")
+            ), // Path to TH4 door
+            NavNode(
+                id = "TH4_DOOR_NODE",
+                position = Position(950f, 317f, 1),
+                connections = listOf("TH4_ACCESS_PATH"),
+                type = NodeType.DOOR
+            ), // TH4 Door (Est from POI map)
+
+            NavNode(
+                id = "EAST_WING_VERTICAL_NORTH_END",
+                position = Position(1080f, 220f, 1),
+                connections = listOf(
+                    "EAST_WING_MID_JUNCTION",
+                    "NE_CORRIDOR_JUNCTION_EAST",
+                    "STAIRS_E_N_MID"
+                )
+            ), // Top of East Wing Vertical
+
+            // === Path from North-East Entrance (ENTRANCE_NORTH_EAST at 1180,80) ===
+            NavNode(
+                id = "NE_CORRIDOR_1",
+                position = Position(1100f, 180f, 1),
+                connections = listOf(
+                    "ENTRANCE_EAST",
+                    "AKADEMIK_ACCESS_CORRIDOR_NORTH",
+                    "NE_CORRIDOR_JUNCTION_EAST"
+                )
+            ),
+            NavNode(
+                id = "NE_CORRIDOR_JUNCTION_EAST",
+                position = Position(1080f, 180f, 1),
+                connections = listOf(
+                    "NE_CORRIDOR_1",
+                    "EAST_WING_VERTICAL_NORTH_END",
+                    "UNIT_CAWANGAN_DOOR_NODE",
+                    "TH5_DOOR_NODE"
+                )
+            ), // Junction for Unit Cawangan & TH5
+            NavNode(
+                id = "UNIT_CAWANGAN_DOOR_NODE",
+                position = Position(1000f, 131f, 1),
+                connections = listOf("NE_CORRIDOR_JUNCTION_EAST"),
+                type = NodeType.DOOR
+            ), // Unit Cawangan
+            NavNode(
+                id = "TH5_DOOR_NODE",
+                position = Position(1000f, 222f, 1),
+                connections = listOf("NE_CORRIDOR_JUNCTION_EAST"),
+                type = NodeType.DOOR
+            ), // TH5
+
+            // === YELLOW STAIRS (Re-estimated positions, connected to nearest appropriate node) ===
+            NavNode(
+                id = "STAIRS_W1",
+                position = Position(180f, 620f, 1),
+                connections = listOf("W_CORRIDOR_2"),
+                type = NodeType.STAIRS
+            ),      // Near TH1/West Entrance
+            NavNode(
+                id = "STAIRS_S1",
+                position = Position(730f, 730f, 1),
+                connections = listOf("M_CORRIDOR_2_INTERSECTION"),
+                type = NodeType.STAIRS
+            ), // South near TH3
+            NavNode(
+                id = "STAIRS_NW1",
+                position = Position(700f, 150f, 1),
+                connections = listOf("AKADEMIK_ACCESS_CORRIDOR_NORTH"),
+                type = NodeType.STAIRS
+            ), // Top-Left near Akademik/Tandas P
+            NavNode(
+                id = "STAIRS_E_S_MID",
+                position = Position(1110f, 500f, 1),
+                connections = listOf("EAST_WING_VERTICAL_SOUTH_END"),
+                type = NodeType.STAIRS
+            ), // East Wing, south part of vertical
+            NavNode(
+                id = "STAIRS_E_N_MID",
+                position = Position(1110f, 220f, 1),
+                connections = listOf("EAST_WING_VERTICAL_NORTH_END"),
+                type = NodeType.STAIRS
+            )  // East Wing, north part of vertical
         )
     }
 
@@ -507,126 +646,162 @@ class NavigationRepository {
         try {
             kotlinx.coroutines.delay(500)
 
+            // POI Coordinates meticulously re-estimated based on the user-provided image 
+            // "image_with_poi_labels.png" (showing POIs within their boxes) and scaled 
+            // to the 1165.149f (width) x 760.814f (height) canvas.
             val allPOIs = listOf(
-                // Theater Halls
+                // Bottom Row Theaters (from left to right)
                 PointOfInterest(
                     id = "th1_poi",
                     name = "TH 1",
-                    description = "Theater Hall 1 - Large lecture theater with stadium seating",
+                    description = "Theater Hall 1",
                     category = POICategory.CLASSROOM,
-                    position = Position(x = 480.15f, y = 779.25f, floor = 1)
+                    position = Position(160f, 705f, 1)
                 ),
                 PointOfInterest(
                     id = "th2_poi",
                     name = "TH 2",
-                    description = "Theater Hall 2 - Large lecture theater with stadium seating",
+                    description = "Theater Hall 2",
                     category = POICategory.CLASSROOM,
-                    position = Position(x = 641.35f, y = 779.25f, floor = 1)
+                    position = Position(320f, 705f, 1)
                 ),
                 PointOfInterest(
                     id = "th3_poi",
                     name = "TH 3",
-                    description = "Theater Hall 3 - Large lecture theater with stadium seating",
+                    description = "Theater Hall 3",
                     category = POICategory.CLASSROOM,
-                    position = Position(x = 807.65f, y = 779.25f, floor = 1)
-                ),
-                PointOfInterest(
-                    id = "th4_poi",
-                    name = "TH 4",
-                    description = "Theater Hall 4 - Medium lecture theater",
-                    category = POICategory.CLASSROOM,
-                    position = Position(x = 1356.7f, y = 317.75f, floor = 1)
-                ),
-                PointOfInterest(
-                    id = "th5_poi",
-                    name = "TH 5",
-                    description = "Theater Hall 5 - Medium lecture theater",
-                    category = POICategory.CLASSROOM,
-                    position = Position(x = 1356.7f, y = 222.5f, floor = 1)
+                    position = Position(480f, 705f, 1)
                 ),
 
-                // Administrative Offices
-                PointOfInterest(
-                    id = "pejabot_akademik_poi",
-                    name = "Pejabot Pengurusan Akademik",
-                    description = "Academic Management Office - Student academic services",
-                    category = POICategory.OFFICE,
-                    position = Position(x = 700f, y = 113.5f, floor = 1)
-                ),
+                // Admin Block (Left Side)
                 PointOfInterest(
                     id = "pejabot_pentadbiran_poi",
-                    name = "Pejabot Pengurusan Pentadbiran FSKM",
-                    description = "FSKM Administrative Management Office",
+                    name = "Pejabat Pengurusan Pentadbiran FSKM",
+                    description = "FSKM Admin Office",
                     category = POICategory.OFFICE,
-                    position = Position(x = 509.15f, y = 257f, floor = 1)
-                ),
-                PointOfInterest(
-                    id = "unit_cawangan_poi",
-                    name = "Unit Cawangan Zon 4",
-                    description = "Zone 4 Branch Unit - Student support services",
-                    category = POICategory.OFFICE,
-                    position = Position(x = 1356.7f, y = 131.75f, floor = 1)
-                ),
-
-                // Facilities
-                PointOfInterest(
-                    id = "cafe_poi",
-                    name = "Cafe",
-                    description = "Campus cafe - Food, beverages and student gathering space",
-                    category = POICategory.CAFETERIA,
-                    position = Position(
-                        x = (1339.1f + 1549.7f) / 2f,
-                        y = (473.7f + 558.2f) / 2f,
-                        floor = 1
-                    )
-                ),
-                PointOfInterest(
-                    id = "laman_najib_poi",
-                    name = "Laman Najib",
-                    description = "Central courtyard - Open space for student activities",
-                    category = POICategory.LOBBY,
-                    position = Position(x = 800f, y = 450f, floor = 1)
-                ),
-
-                // Utilities
-                PointOfInterest(
-                    id = "lift_poi",
-                    name = "Lif",
-                    description = "Elevator access to all floors",
-                    category = POICategory.ELEVATOR,
-                    position = Position(x = 695.35f, y = 276.15f, floor = 1)
+                    position = Position(230f, 270f, 1)
                 ),
                 PointOfInterest(
                     id = "tandas_l_poi",
                     name = "Tandas (L)",
-                    description = "Ladies restroom facilities",
+                    description = "Ladies Restroom (West)",
                     category = POICategory.RESTROOM,
-                    position = Position(x = 509.15f, y = 470.45f, floor = 1),
-                    accessibility = AccessibilityInfo(wheelchairAccessible = true)
+                    position = Position(230f, 480f, 1)
+                ),
+                // The "a" region in Pejabat Pentadbiran FSKM is not made a separate POI unless specified.
+
+                // Central Area
+                PointOfInterest(
+                    id = "lift_poi",
+                    name = "Lif",
+                    description = "Elevator",
+                    category = POICategory.ELEVATOR,
+                    position = Position(430f, 270f, 1)
                 ),
                 PointOfInterest(
-                    id = "tandas_p_poi",
-                    name = "Tandas (P)",
-                    description = "Men's restroom facilities",
+                    id = "laman_najib_poi",
+                    name = "Laman Najib",
+                    description = "Central Courtyard",
+                    category = POICategory.LOBBY,
+                    position = Position(580f, 380f, 1)
+                ),
+                PointOfInterest(
+                    id = "pejabot_akademik_poi",
+                    name = "Pejabot Pengurusan Akademik",
+                    description = "Academic Office",
+                    category = POICategory.OFFICE,
+                    position = Position(530f, 135f, 1)
+                ),
+                PointOfInterest(
+                    id = "tandas_p_admin_poi",
+                    name = "Tandas (P) Admin",
+                    description = "Men's Restroom (near Akademik)",
                     category = POICategory.RESTROOM,
-                    position = Position(x = 855.65f, y = 113.5f, floor = 1),
-                    accessibility = AccessibilityInfo(wheelchairAccessible = true)
+                    position = Position(700f, 135f, 1)
+                ),
+                // The "a" region in Pejabot Pengurusan Akademik is not made a separate POI.
+
+                // South-East Area (near bottom-right of Laman Najib)
+                PointOfInterest(
+                    id = "surau_p_dewan_poi",
+                    name = "Surau (P)",
+                    description = "Women's Prayer Room (Dewan Area)",
+                    category = POICategory.PRAYER_ROOM,
+                    position = Position(780f, 560f, 1)
+                ),
+                PointOfInterest(
+                    id = "tandas_p_dewan_poi",
+                    name = "Tandas (P) Dewan",
+                    description = "Men's Restroom (Dewan Area)",
+                    category = POICategory.RESTROOM,
+                    position = Position(780f, 600f, 1)
+                ),
+                PointOfInterest(
+                    id = "bilik_karspersky_poi",
+                    name = "Bilik Kaspersky",
+                    description = "Kaspersky Lab",
+                    category = POICategory.LAB,
+                    position = Position(900f, 490f, 1)
                 ),
 
-                // Main entrance
+                // East Wing (Top Right)
                 PointOfInterest(
-                    id = "main_entrance_poi",
-                    name = "Main Entrance",
-                    description = "Primary building entrance",
-                    category = POICategory.ENTRANCE,
-                    position = Position(x = 650f, y = 700f, floor = 1)
+                    id = "unit_cawangan_poi",
+                    name = "Unit Cawangan Zon 4",
+                    description = "Zone 4 Unit",
+                    category = POICategory.OFFICE,
+                    position = Position(930f, 90f, 1)
                 ),
                 PointOfInterest(
-                    id = "east_entrance_poi",
-                    name = "East Entrance",
-                    description = "Secondary entrance from east side",
+                    id = "th5_poi",
+                    name = "TH 5",
+                    description = "Theater Hall 5",
+                    category = POICategory.CLASSROOM,
+                    position = Position(930f, 195f, 1)
+                ),
+                PointOfInterest(
+                    id = "th4_poi",
+                    name = "TH 4",
+                    description = "Theater Hall 4",
+                    category = POICategory.CLASSROOM,
+                    position = Position(930f, 300f, 1)
+                ),
+                PointOfInterest(
+                    id = "tandas_l_east_poi",
+                    name = "Tandas (L) East",
+                    description = "Ladies Restroom (East Wing)",
+                    category = POICategory.RESTROOM,
+                    position = Position(930f, 405f, 1)
+                ), // Labeled Tandas (L) in East Wing
+                PointOfInterest(
+                    id = "cafe_poi",
+                    name = "Cafe",
+                    description = "Campus Cafe",
+                    category = POICategory.CAFETERIA,
+                    position = Position(1030f, 460f, 1)
+                ),
+
+                // Entrances (using visual estimations from blue line map for consistency with NavNodes later)
+                PointOfInterest(
+                    id = "main_entrance_south_poi",
+                    name = "Main Entrance (South)",
+                    description = "Main South Entrance",
                     category = POICategory.ENTRANCE,
-                    position = Position(x = 600f, y = 700f, floor = 1)
+                    position = Position(582f, 740f, 1)
+                ),
+                PointOfInterest(
+                    id = "west_entrance_poi",
+                    name = "West Entrance",
+                    description = "Side West Entrance",
+                    category = POICategory.ENTRANCE,
+                    position = Position(80f, 560f, 1)
+                ),
+                PointOfInterest(
+                    id = "east_entrance_ne_poi",
+                    name = "NE Entrance",
+                    description = "Side North-East Entrance",
+                    category = POICategory.ENTRANCE,
+                    position = Position(1100f, 180f, 1)
                 )
             )
 

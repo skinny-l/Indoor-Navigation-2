@@ -86,11 +86,27 @@ class PositioningEngine(private val context: Context? = null) {
     }
 
     private fun updateIndoorPosition(blePosition: Position?) {
-        if (blePosition != null && isValidIndoorPosition(blePosition)) {
+        val status =
+            _positioningStatus.value // Use the engine's status, which is updated by HybridPositioningService
+        // Count how many of the beacons used in the last calculation were actual "known" beacons
+        val knownBeaconsUsedCount = _beaconsUsedInLastPositioningInternal.value.count {
+            hybridBLEService?.isBeaconKnown(it.beacon.macAddress) == true
+        }
+
+        // A position is only valid if it's from a POSITIONED state, used at least one known beacon, and meets accuracy criteria
+        if (blePosition != null &&
+            status == PositioningStatus.POSITIONED &&
+            knownBeaconsUsedCount > 0 && // THIS IS THE NEW CRITICAL CHECK
+            isValidIndoorPosition(blePosition)
+        ) {
+
             _currentPosition.value = blePosition
+            println("✅ Valid indoor position accepted: (${blePosition.x}, ${blePosition.y}) using $knownBeaconsUsedCount known beacon(s)")
         } else {
-            // Clear position when outside or insufficient signals
-            _currentPosition.value = null
+            if (_currentPosition.value != null) { // Log only when it becomes null
+                println("❌ Indoor position rejected or lost. Status: $status, Known Beacons Used: $knownBeaconsUsedCount, BLE Pos: $blePosition, Accuracy: ${blePosition?.accuracy}")
+            }
+            _currentPosition.value = null // Set to null if conditions aren't met
         }
     }
 

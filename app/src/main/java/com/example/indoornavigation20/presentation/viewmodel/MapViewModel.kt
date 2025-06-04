@@ -139,17 +139,9 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
             selectFloor(poi.position.floor)
         }
 
-        // Navigate to POI if current position is available, otherwise clear navigation
-        val currentPos = _uiState.value.currentPosition
-        if (currentPos != null) {
-            navigateTo(poi.position)
-        } else {
-            // Clear any existing navigation path when no position is available
-            _uiState.value = _uiState.value.copy(
-                navigationPath = null,
-                errorMessage = "Navigation not available - you are outside the building. Move inside to get directions."
-            )
-        }
+        // ALWAYS attempt to navigate.
+        // navigateTo will use a demo start if currentPosition is null.
+        navigateTo(poi.position)
     }
 
     fun updateCurrentPosition(position: Position) {
@@ -205,9 +197,33 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
     fun navigateTo(destination: Position) {
         val currentPosition = _uiState.value.currentPosition
         if (currentPosition == null) {
-            _uiState.value = _uiState.value.copy(
-                errorMessage = "Current position not available"
-            )
+            // For testing purposes, use a demo start position when no real position is available
+            // Using ENTRANCE_MAIN_SOUTH from the user's latest node list
+            val demoPosition = Position(
+                x = 775f,
+                y = 835f,
+                floor = 1
+            ) // Updated to match user's ENTRANCE_MAIN_SOUTH
+            println("🧪 Using demo position for testing: (${demoPosition.x}, ${demoPosition.y})")
+
+            viewModelScope.launch {
+                try {
+                    val path = pathfindingEngine.findPath(
+                        start = demoPosition,
+                        goal = destination,
+                        floorPlans = floorPlans
+                    )
+
+                    _uiState.value = _uiState.value.copy(
+                        navigationPath = path,
+                        errorMessage = "Demo route from main entrance (you are currently outside)"
+                    )
+                } catch (e: Exception) {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "Navigation failed: ${e.message}"
+                    )
+                }
+            }
             return
         }
 

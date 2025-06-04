@@ -73,7 +73,7 @@ fun FloorPlanViewer(
             ) {
                 // Display the actual SVG floor plan
                 Image(
-                    painter = painterResource(id = R.drawable.ground_floor),
+                    painter = painterResource(id = R.drawable.plain_svg), // Updated to new XML name
                     contentDescription = "Floor Plan",
                     modifier = Modifier
                         .fillMaxSize()
@@ -88,6 +88,38 @@ fun FloorPlanViewer(
                         // Draw navigation path
                         navigationPath?.let { path ->
                             drawNavigationPath(path, floorPlan)
+                        }
+
+                        // Draw all navigation nodes for debugging
+                        floorPlan.nodes?.forEach { node ->
+                            if (node.position.floor == floorPlan.floorNumber) { // Ensure node is on current floor
+                                drawCircle(
+                                    color = Color.Magenta,
+                                    radius = 4f,
+                                    center = Offset(node.position.x, node.position.y)
+                                )
+                            }
+                        }
+
+                        // Draw all connections between nodes for debugging 
+                        floorPlan.nodes?.forEach { node ->
+                            if (node.position.floor == floorPlan.floorNumber) {
+                                node.connections.forEach { connectionId ->
+                                    val connectedNode =
+                                        floorPlan.nodes.find { it.id == connectionId }
+                                    if (connectedNode != null && connectedNode.position.floor == floorPlan.floorNumber) {
+                                        drawLine(
+                                            color = Color.Cyan.copy(alpha = 0.5f),
+                                            start = Offset(node.position.x, node.position.y),
+                                            end = Offset(
+                                                connectedNode.position.x,
+                                                connectedNode.position.y
+                                            ),
+                                            strokeWidth = 1.5f
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         // Draw POIs - positioned relative to the SVG
