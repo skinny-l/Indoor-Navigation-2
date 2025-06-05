@@ -17,7 +17,8 @@ data class NavNode(
     val position: Position,
     val connections: List<String> = emptyList(),
     val isWalkable: Boolean = true,
-    val type: NodeType = NodeType.WALKWAY
+    val type: NodeType = NodeType.WALKWAY,
+    val isUserCreated: Boolean = false
 )
 
 @Serializable

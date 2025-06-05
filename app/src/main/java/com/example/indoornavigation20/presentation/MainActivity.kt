@@ -19,6 +19,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.indoornavigation20.presentation.screens.*
 import com.example.indoornavigation20.presentation.theme.IndoorNavigation20Theme
+import com.google.firebase.auth.FirebaseAuth
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,6 +41,15 @@ class MainActivity : ComponentActivity() {
 fun NavigationApp() {
     val navController = rememberNavController()
     val context = LocalContext.current
+    val auth = FirebaseAuth.getInstance()
+    var currentUser by remember { mutableStateOf(auth.currentUser) }
+
+    // Listen for auth state changes
+    LaunchedEffect(Unit) {
+        auth.addAuthStateListener { firebaseAuth ->
+            currentUser = firebaseAuth.currentUser
+        }
+    }
 
     // Permission launcher
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -89,6 +99,7 @@ fun NavigationApp() {
         composable("welcome") {
             WelcomeScreen(
                 onNavigateToLogin = { navController.navigate("login") },
+                onNavigateToSignUp = { navController.navigate("signup") },
                 onNavigateToMain = {
                     navController.navigate("map") {
                         popUpTo("welcome") { inclusive = true }
@@ -103,6 +114,20 @@ fun NavigationApp() {
                     navController.navigate("map") {
                         popUpTo("welcome") { inclusive = true }
                     }
+                },
+                onNavigateToSignUp = { navController.navigate("signup") }
+            )
+        }
+
+        composable("signup") {
+            SignUpScreen(
+                onSignUpSuccess = {
+                    navController.navigate("map") {
+                        popUpTo("welcome") { inclusive = true }
+                    }
+                },
+                onNavigateToLogin = {
+                    navController.popBackStack("login", inclusive = false)
                 }
             )
         }
@@ -114,6 +139,20 @@ fun NavigationApp() {
                 },
                 onNavigateToBeacons = {
                     navController.navigate("status")
+                },
+                onNavigateToAdmin = {
+                    navController.navigate("admin")
+                }
+            )
+        }
+
+        composable("admin") {
+            AdminScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToDebug = {
+                    navController.navigate("debug")
                 }
             )
         }
@@ -136,6 +175,14 @@ fun NavigationApp() {
 
         composable("status") {
             StatusScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable("debug") {
+            DebugScreen(
                 onNavigateBack = {
                     navController.popBackStack()
                 }

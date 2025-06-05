@@ -28,82 +28,174 @@ class PathfindingEngine {
         floorPlan: FloorPlan
     ): List<Position> {
         println("🗺️ PathfindingEngine: Finding path from (${start.x}, ${start.y}) to (${goal.x}, ${goal.y})")
-        println("🗺️ Available nodes: ${floorPlan.nodes.size}")
+        println("🗺️ Available nodes: ${floorPlan.nodes.size}, Walls: ${floorPlan.walls.size}")
 
-        if (floorPlan.nodes.isEmpty()) {
-            println("⚠️ No navigation nodes found, using direct path")
-            return listOf(start, goal)
+        // Print all available navigation nodes for debugging
+        println("🗺️ Navigation nodes:")
+        floorPlan.nodes.forEach { node ->
+            println("   - ${node.id}: (${node.position.x}, ${node.position.y}) connections: ${node.connections}")
         }
 
-        // Attempt to snap to the nearest nodes only if they are very close
-        val startNode = findNearestNodeIfClose(start, floorPlan.nodes, maxDistance = 20f)
-        val goalNode = findNearestNodeIfClose(goal, floorPlan.nodes, maxDistance = 20f)
+        // FORCE node-based routing when user has placed nodes
+        if (floorPlan.nodes.isNotEmpty()) {
+            println("🗺️ User has placed ${floorPlan.nodes.size} nodes - forcing node-based routing")
 
-        val effectiveStartPos = startNode?.position ?: start
-        val effectiveGoalPos = goalNode?.position ?: goal
+            // Filter walkable nodes only
+            val walkableNodes =
+                floorPlan.nodes.filter { it.isWalkable && it.type != NodeType.OBSTACLE }
+            println("🗺️ Walkable nodes: ${walkableNodes.size}")
 
-        println("🗺️ Effective Start: ${startNode?.id ?: "RAW_POS"} at (${effectiveStartPos.x}, ${effectiveStartPos.y})")
-        println("🗺️ Effective Goal: ${goalNode?.id ?: "RAW_POS"} at (${effectiveGoalPos.x}, ${effectiveGoalPos.y})")
+            // Always try to snap to nodes when they exist
+            val startNode = findNearestWalkableNodeIfClose(start, walkableNodes, maxDistance = 200f)
+            val goalNode = findNearestWalkableNodeIfClose(goal, walkableNodes, maxDistance = 200f)
 
-        // If both start and goal are snapped to nodes, use A* through the node network
-        if (startNode != null && goalNode != null) {
-            val nodePath = findPathThroughNodes(startNode, goalNode, floorPlan.nodes)
-            if (nodePath.isNotEmpty()) {
-                println("✅ Path found through ${nodePath.size} nodes: ${nodePath.map { it.id }}")
-                return buildCorridorPath(
-                    start,
-                    goal,
-                    nodePath
-                ) // Use original start/goal for full path
+            println("🗺️ Start node search: looking for node near (${start.x}, ${start.y})")
+            walkableNodes.forEach { node ->
+                val dist = distance(start, node.position)
+                println("   - ${node.id} at (${node.position.x}, ${node.position.y}) distance: ${dist}")
             }
-            println("❌ No node path from ${startNode.id} to ${goalNode.id}, trying direct or partial node path.")
+
+            println("🗺️ Goal node search: looking for node near (${goal.x}, ${goal.y})")
+            walkableNodes.forEach { node ->
+                val dist = distance(goal, node.position)
+                println("   - ${node.id} at (${node.position.x}, ${node.position.y}) distance: ${dist}")
+            }
+
+            // If we found nodes, use them for routing
+            if (startNode != null && goalNode != null) {
+                val nodePath =
+                    findPathThroughNodes(startNode, goalNode, walkableNodes, floorPlan.walls)
+                if (nodePath.isNotEmpty()) {
+                    println("✅ Path found through ${nodePath.size} nodes: ${nodePath.map { it.id }}")
+                    return buildWalkableCorridorPath(start, goal, nodePath, floorPlan.walls)
+                }
+                println("❌ No node path from ${startNode.id} to ${goalNode.id}")
+            }
+
+            // Enhanced fallback with wall-aware pathfinding
+            return findPathWithObstacleAvoidance(start, goal, walkableNodes, floorPlan.walls)
         }
 
-        // Fallback or partial node path logic (e.g., if one end is not near a node)
-        // This part might need more sophisticated handling for better routes when not fully on node network
-        // For now, if a full node path isn't found, it will effectively create a path that includes
-        // start -> nearest_start_node (if_snapped) -> ... -> nearest_goal_node (if_snapped) -> goal
-        // If snapping fails for both, it becomes a direct line. 
-        // This simplified fallback can lead to the straight lines if node network isn't dense or well-connected.
+        // No nodes available - use basic obstacle avoidance
+        println("⚠️ No navigation nodes found, attempting basic obstacle avoidance")
+        return findPathWithBasicObstacleAvoidance(start, goal, floorPlan.walls)
+    }
 
+    private fun isPathWalkable(start: Position, end: Position, walls: List<Wall>): Boolean {
+        if (walls.isEmpty()) return true
+
+        for (wall in walls) {
+            if (lineIntersectsWall(start, end, wall)) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private fun lineIntersectsWall(start: Position, end: Position, wall: Wall): Boolean {
+        // Check if line segment from start to end intersects with the wall
+        val x1 = start.x
+        val y1 = start.y
+        val x2 = end.x
+        val y2 = end.y
+
+        val x3 = wall.startPosition.x
+        val y3 = wall.startPosition.y
+        val x4 = wall.endPosition.x
+        val y4 = wall.endPosition.y
+
+        val denominator = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+        if (abs(denominator) < 1e-10) return false // Lines are parallel
+
+        val t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denominator
+        val u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denominator
+
+        return t >= 0 && t <= 1 && u >= 0 && u <= 1
+    }
+
+    private fun findPathWithBasicObstacleAvoidance(
+        start: Position,
+        goal: Position,
+        walls: List<Wall>
+    ): List<Position> {
+        // Simple obstacle avoidance by finding intermediate points
+        val intermediatePoints = mutableListOf<Position>()
+
+        // Try waypoints around major obstacles
+        val midX = (start.x + goal.x) / 2
+        val midY = (start.y + goal.y) / 2
+
+        val candidates = listOf(
+            Position(midX, start.y, start.floor),
+            Position(goal.x, midY, start.floor),
+            Position(start.x, midY, start.floor),
+            Position(midX, goal.y, start.floor)
+        )
+
+        for (candidate in candidates) {
+            if (isPathWalkable(start, candidate, walls) && isPathWalkable(candidate, goal, walls)) {
+                return listOf(start, candidate, goal)
+            }
+        }
+
+        // If no simple path found, return direct path as fallback
+        println("⚠️ No walkable path found, using direct path as fallback")
+        return listOf(start, goal)
+    }
+
+    private fun findPathWithObstacleAvoidance(
+        start: Position,
+        goal: Position,
+        walkableNodes: List<NavNode>,
+        walls: List<Wall>
+    ): List<Position> {
         val pathPoints = mutableListOf<Position>()
         pathPoints.add(start)
-        if (startNode != null && (startNode.position.x != start.x || startNode.position.y != start.y)) {
+
+        // Find nearest walkable nodes for routing
+        val startNode = findNearestWalkableNodeIfClose(start, walkableNodes, maxDistance = 50f)
+        val goalNode = findNearestWalkableNodeIfClose(goal, walkableNodes, maxDistance = 50f)
+
+        if (startNode != null && isPathWalkable(start, startNode.position, walls)) {
             pathPoints.add(startNode.position)
-        }
 
-        // If we have both start and goal nodes but no path between them, it implies a disconnected graph or isolated nodes.
-        // In a real-world scenario, this would indicate an issue with the map data.
-        // For now, we are just creating a line between the nodes or to the goal if one node is missing.
-        if (startNode != null && goalNode != null && startNode.id != goalNode.id) {
-            // This is a simplification; ideally, we'd attempt a partial A* or other strategy.
-            println("↔️ Connecting snapped start/goal nodes directly as no full A* path was found.")
-        }
-
-        if (goalNode != null && (goalNode.position.x != goal.x || goalNode.position.y != goal.y)) {
-            pathPoints.add(goalNode.position)
-        }
-        pathPoints.add(goal)
-
-        println(
-            "🔗 Using simplified path connection. Points: ${
-                pathPoints.map {
-                    Pair(
-                        it.x,
-                        it.y
-                    )
+            if (goalNode != null && startNode.id != goalNode.id) {
+                // Try to find path between nodes
+                val nodePath = findPathThroughNodes(startNode, goalNode, walkableNodes, walls)
+                if (nodePath.isNotEmpty()) {
+                    // Add intermediate nodes (skip first as it's already added)
+                    pathPoints.addAll(nodePath.drop(1).map { it.position })
+                } else if (isPathWalkable(startNode.position, goalNode.position, walls)) {
+                    pathPoints.add(goalNode.position)
                 }
-            }"
-        )
+            }
+
+            if (goalNode != null && isPathWalkable(pathPoints.last(), goalNode.position, walls)) {
+                if (pathPoints.last() != goalNode.position) {
+                    pathPoints.add(goalNode.position)
+                }
+            }
+        }
+
+        // Ensure we end at the goal if path is walkable
+        if (isPathWalkable(pathPoints.last(), goal, walls)) {
+            pathPoints.add(goal)
+        } else {
+            // Try basic obstacle avoidance for the final segment
+            val avoidancePath = findPathWithBasicObstacleAvoidance(pathPoints.last(), goal, walls)
+            pathPoints.addAll(avoidancePath.drop(1)) // Skip first point as it's already in pathPoints
+        }
+
         return pathPoints.distinctBy { "${it.x.toInt()},${it.y.toInt()}" }
     }
 
-    private fun findNearestNodeIfClose(
+    private fun findNearestWalkableNodeIfClose(
         position: Position,
-        nodes: List<NavNode>,
+        walkableNodes: List<NavNode>,
         maxDistance: Float
     ): NavNode? {
-        val nearestNode = nodes.filter { it.type == NodeType.WALKWAY || it.type == NodeType.DOOR }
+        val nearestNode = walkableNodes
+            .filter { it.type == NodeType.WALKWAY || it.type == NodeType.DOOR }
             .minByOrNull { distance(position, it.position) }
 
         if (nearestNode != null && distance(position, nearestNode.position) <= maxDistance) {
@@ -115,7 +207,8 @@ class PathfindingEngine {
     private fun findPathThroughNodes(
         startNode: NavNode,
         goalNode: NavNode,
-        allNodes: List<NavNode>
+        allNodes: List<NavNode>,
+        walls: List<Wall>
     ): List<NavNode> {
         val openList = PriorityQueue<AStarNode>(compareBy { it.fCost })
         val closedList = mutableSetOf<String>()
@@ -138,13 +231,18 @@ class PathfindingEngine {
                 return reconstructPath(current)
             }
 
-            // Only traverse through explicitly connected nodes (no shortcuts)
+            // Only traverse through explicitly connected walkable nodes
             for (neighborId in current.node.connections) {
                 if (neighborId in closedList) continue
 
                 val neighbor = nodeMap[neighborId] ?: continue
 
-                // Use actual corridor distance, not straight-line distance
+                // Skip non-walkable neighbors or obstacles
+                if (!neighbor.isWalkable || neighbor.type == NodeType.OBSTACLE) continue
+
+                // Verify the path between nodes is walkable (no wall intersections)
+                if (!isPathWalkable(current.node.position, neighbor.position, walls)) continue
+
                 val corridorDistance = calculateCorridorDistance(current.node, neighbor)
                 val tentativeGCost = current.gCost + corridorDistance
 
@@ -163,7 +261,7 @@ class PathfindingEngine {
             }
         }
 
-        return emptyList() // No path found through corridor network
+        return emptyList() // No walkable path found through corridor network
     }
 
     private fun calculateCorridorDistance(nodeA: NavNode, nodeB: NavNode): Float {
@@ -173,106 +271,105 @@ class PathfindingEngine {
         return dx + dy
     }
 
-    private fun buildCorridorPath(
-        start: Position, // Original start position
-        goal: Position,   // Original goal position
-        nodePath: List<NavNode> // The exact sequence of nodes from A*
+    private fun buildWalkableCorridorPath(
+        start: Position,
+        goal: Position,
+        nodePath: List<NavNode>,
+        walls: List<Wall>
     ): List<Position> {
         val finalPathPoints = mutableListOf<Position>()
 
         if (nodePath.isEmpty()) {
-            // This case should ideally not be reached if findPathThroughNodes found a path.
-            // If it does, it means A* failed, and we might have a disconnected graph or an issue.
-            // Fallback to a direct line, but log this as an error/warning.
-            println("⚠️ buildCorridorPath: nodePath is empty. A* failed or graph disconnected. Falling back to direct line.")
-            finalPathPoints.add(start)
-            finalPathPoints.add(goal)
-            return finalPathPoints
+            println("⚠️ buildWalkableCorridorPath: nodePath is empty. Falling back to obstacle avoidance.")
+            return findPathWithBasicObstacleAvoidance(start, goal, walls)
         }
 
-        // 1. Start with the original start position.
+        // Start with the original start position
         finalPathPoints.add(start)
         println("  ➡️ Path: Added raw start (${start.x}, ${start.y})")
 
-        // 2. Add the position of the first node in the A* path IF it's different from the start.
-        // This connects the start point to the beginning of the node network segment.
+        // Add path to first node if walkable
         val firstNodePos = nodePath.first().position
         if (start.x != firstNodePos.x || start.y != firstNodePos.y) {
-            finalPathPoints.add(firstNodePos)
-            println("  ➡️ Path: Added first A* node (${firstNodePos.x}, ${firstNodePos.y})")
+            if (isPathWalkable(start, firstNodePos, walls)) {
+                finalPathPoints.add(firstNodePos)
+                println("  ➡️ Path: Added first A* node (${firstNodePos.x}, ${firstNodePos.y})")
+            } else {
+                println("  ⚠️ Path to first node blocked, finding alternative")
+                val alternativePath = findPathWithBasicObstacleAvoidance(start, firstNodePos, walls)
+                finalPathPoints.addAll(alternativePath.drop(1)) // Skip start position
+            }
         }
 
-        // 3. Add all intermediate node positions from the A* path.
-        // Skip the first node if it was already added (i.e., if it wasn't the same as raw start).
-        val startIndexForLoop = if (finalPathPoints.last() == firstNodePos) 1 else 0
-        for (i in startIndexForLoop until nodePath.size) {
+        // Add all node positions from the A* path, ensuring each segment is walkable
+        for (i in 1 until nodePath.size) {
             val currentNodePos = nodePath[i].position
-            // Only add if different from the last point to avoid micro-duplicates from start/first node handling
-            if (finalPathPoints.isEmpty() || finalPathPoints.last().x != currentNodePos.x || finalPathPoints.last().y != currentNodePos.y) {
+            val lastPos = finalPathPoints.last()
+
+            if (isPathWalkable(lastPos, currentNodePos, walls)) {
                 finalPathPoints.add(currentNodePos)
                 println("  ➡️ Path: Added A* node ${nodePath[i].id} (${currentNodePos.x}, ${currentNodePos.y})")
+            } else {
+                println("  ⚠️ Path segment blocked, attempting detour")
+                // Try to find alternative path to this node
+                val detourPath = findPathWithBasicObstacleAvoidance(lastPos, currentNodePos, walls)
+                finalPathPoints.addAll(detourPath.drop(1)) // Skip the starting position
             }
         }
 
-        // 4. Add the position of the last node in the A* path IF it's different from the current last point in our path.
-        // This ensures the end of the node network segment is explicitly included.
-        val lastNodePos = nodePath.last().position
-        if (finalPathPoints.last().x != lastNodePos.x || finalPathPoints.last().y != lastNodePos.y) {
-            // This check is a bit redundant if the loop correctly added the last node,
-            // but ensures the last A* node is present before connecting to the raw goal.
-            finalPathPoints.add(lastNodePos)
-            println("  ➡️ Path: Added last A* node (explicit) (${lastNodePos.x}, ${lastNodePos.y})")
+        // Add path to final goal if walkable
+        val lastNodePos = finalPathPoints.last()
+        if (lastNodePos.x != goal.x || lastNodePos.y != goal.y) {
+            if (isPathWalkable(lastNodePos, goal, walls)) {
+                finalPathPoints.add(goal)
+                println("  ➡️ Path: Added raw goal (${goal.x}, ${goal.y})")
+            } else {
+                println("  ⚠️ Path to goal blocked, finding alternative")
+                val finalPath = findPathWithBasicObstacleAvoidance(lastNodePos, goal, walls)
+                finalPathPoints.addAll(finalPath.drop(1)) // Skip starting position
+            }
         }
 
-        // 5. Finally, add the original goal position, IF it's different from the last node added.
-        if (finalPathPoints.last().x != goal.x || finalPathPoints.last().y != goal.y) {
-            finalPathPoints.add(goal)
-            println("  ➡️ Path: Added raw goal (${goal.x}, ${goal.y})")
-        }
-
-        println("  ➡️ Path: Final points before simplify: ${finalPathPoints.map { "(${it.x},${it.y})" }}")
-        // Apply a very conservative simplification just to remove truly redundant points.
-        return simplifyPathBasic(finalPathPoints)
+        println("  ➡️ Path: Final walkable points: ${finalPathPoints.map { "(${it.x},${it.y})" }}")
+        return simplifyWalkablePath(finalPathPoints, walls)
     }
 
-    // Formerly simplifyPath, now a more basic version.
-    // The main goal is to remove only truly redundant consecutive points.
-    private fun simplifyPathBasic(path: List<Position>): List<Position> {
-        if (path.size < 2) return path
-        val simplifiedPath = mutableListOf<Position>()
-        simplifiedPath.add(path.first())
-        for (i in 1 until path.size) {
-            // Only add point if it's different from the last one added.
-            // This removes consecutive duplicates but keeps all turns.
-            if (path[i].x != simplifiedPath.last().x || path[i].y != simplifiedPath.last().y) {
-                simplifiedPath.add(path[i])
-            }
-        }
-        println("  ➡️ Path: Final points after simplifyBasic: ${simplifiedPath.map { "(${it.x},${it.y})" }}")
-        return simplifiedPath
-    }
+    private fun simplifyWalkablePath(path: List<Position>, walls: List<Wall>): List<Position> {
+        if (path.size < 3) return path
 
-    // The old simplifyPath logic, temporarily disabled by not being called.
-    private fun simplifyPathAdvanced(path: List<Position>): List<Position> {
-        if (path.size < 2) return path
         val simplifiedPath = mutableListOf<Position>()
         simplifiedPath.add(path.first())
-        for (i in 1 until path.size - 1) {
-            val p1 = simplifiedPath.last()
-            val p2 = path[i]
-            val p3 = path[i + 1]
-            val collinear = (p2.y - p1.y) * (p3.x - p2.x) == (p3.y - p2.y) * (p2.x - p1.x)
-            if (!collinear || i == path.size - 2) {
-                if (!(p1.x == p2.x && p1.y == p2.y)) {
-                    simplifiedPath.add(p2)
-                 }
+
+        var i = 0
+        while (i < path.size - 1) {
+            var farthestReachable = i + 1
+
+            // Find the farthest point we can reach directly without hitting walls
+            for (j in i + 2 until path.size) {
+                if (isPathWalkable(path[i], path[j], walls)) {
+                    farthestReachable = j
+                } else {
+                    break
+                }
+            }
+
+            // Add the farthest reachable point
+            if (farthestReachable > i + 1) {
+                simplifiedPath.add(path[farthestReachable])
+                i = farthestReachable
+            } else {
+                simplifiedPath.add(path[i + 1])
+                i++
             }
         }
-        if (!(simplifiedPath.last().x == path.last().x && simplifiedPath.last().y == path.last().y)) {
+
+        // Ensure we have the final destination
+        if (simplifiedPath.last() != path.last()) {
             simplifiedPath.add(path.last())
         }
 
-        return simplifiedPath.distinctBy { "${it.x.toInt()}-${it.y.toInt()}" }
+        println("  ➡️ Path: Simplified walkable path: ${simplifiedPath.map { "(${it.x},${it.y})" }}")
+        return simplifiedPath
     }
 
     private fun findMultiFloorPath(
@@ -284,12 +381,12 @@ class PathfindingEngine {
 
         val startFloorPlan = floorPlans[start.floor]!!
         val transitions = startFloorPlan.nodes.filter {
-            it.type == NodeType.ELEVATOR || it.type == NodeType.STAIRS
+            (it.type == NodeType.ELEVATOR || it.type == NodeType.STAIRS) && it.isWalkable
         }
 
         val nearestTransition = transitions.minByOrNull {
             distance(start, it.position)
-        } ?: throw IllegalStateException("No floor transition found")
+        } ?: throw IllegalStateException("No walkable floor transition found")
 
         val pathToTransition =
             findSingleFloorPath(start, nearestTransition.position, startFloorPlan)
@@ -306,8 +403,9 @@ class PathfindingEngine {
         val goalFloorPlan = floorPlans[goal.floor]!!
         val goalTransition = goalFloorPlan.nodes.find {
             it.position.x == nearestTransition.position.x &&
-                    it.position.y == nearestTransition.position.y
-        } ?: throw IllegalStateException("Corresponding transition not found")
+                    it.position.y == nearestTransition.position.y &&
+                    it.isWalkable
+        } ?: throw IllegalStateException("Corresponding walkable transition not found")
 
         val pathFromTransition = findSingleFloorPath(goalTransition.position, goal, goalFloorPlan)
         steps.addAll(pathFromTransition.map { NavigationStep.Move(it) })

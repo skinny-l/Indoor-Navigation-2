@@ -3,8 +3,539 @@ package com.example.indoornavigation20.data.repository
 import com.example.indoornavigation20.domain.model.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.tasks.await
 
 class NavigationRepository {
+    // Store POIs in memory for manual editing
+    private val editablePOIs = mutableListOf<PointOfInterest>()
+
+    // Store user-created navigation nodes in memory
+    private val userNodes = mutableListOf<NavNode>()
+
+    // Firebase instances
+    private val firestore = FirebaseFirestore.getInstance()
+    private val auth = FirebaseAuth.getInstance()
+
+    init {
+        // Don't load default POIs anymore - only user-created ones
+        // Load POIs from Firestore when repository is initialized
+        loadPOIsFromFirestore()
+        loadNodesFromFirestore()
+    }
+
+    // Add method to get debug info about stored nodes and their connections
+    fun getNodeStorageInfo(): String {
+        val userId = auth.currentUser?.uid ?: "guest_user"
+        return """
+            🔗 NODE STORAGE INFO 🔗
+            
+            📍 Storage Path: nodes/$userId/user_nodes/
+            📊 Total Nodes: ${userNodes.size}
+            
+            📋 Node Details:
+            ${
+            userNodes.joinToString("\n") { node ->
+                "• ${node.id.takeLast(8)}: (${node.position.x.toInt()}, ${node.position.y.toInt()}) - ${node.connections.size} connections"
+            }
+        }
+            
+            🔗 Connection Network:
+            ${
+            userNodes.joinToString("\n") { node ->
+                if (node.connections.isNotEmpty()) {
+                    "• ${node.id.takeLast(8)} → [${
+                        node.connections.map { it.takeLast(4) }.joinToString(", ")
+                    }]"
+                } else {
+                    "• ${node.id.takeLast(8)} → [no connections]"
+                }
+            }
+        }
+        """.trimIndent()
+    }
+
+    // Add method to get user nodes
+    fun getUserNodes(): List<NavNode> {
+        return userNodes.toList()
+    }
+
+    // Method to manually reload nodes (useful for debugging)
+    fun reloadNodes() {
+        loadNodesFromFirestore()
+    }
+
+    // Method to manually reload POIs (useful for debugging)
+    fun reloadPOIs() {
+        loadPOIsFromFirestore()
+    }
+
+    // Load POIs from Firestore
+    private fun loadPOIsFromFirestore() {
+        val userId = auth.currentUser?.uid ?: "guest_user"
+
+        // Load POIs from the current user's collection
+        firestore.collection("pois")
+            .document(userId)
+            .collection("user_pois")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    android.util.Log.e(
+                        "NavigationRepository",
+                        "Error loading POIs: ${error.message}"
+                    )
+                    return@addSnapshotListener
+                }
+
+                if (snapshot != null) {
+                    editablePOIs.clear()
+                    android.util.Log.d(
+                        "NavigationRepository",
+                        "Loading POIs for user: $userId"
+                    )
+                    android.util.Log.d(
+                        "NavigationRepository",
+                        "Found ${snapshot.documents.size} POI documents"
+                    )
+
+                    for (document in snapshot.documents) {
+                        try {
+                            val poi = PointOfInterest(
+                                id = document.id,
+                                name = document.getString("name") ?: "",
+                                description = document.getString("description") ?: "",
+                                category = POICategory.valueOf(
+                                    document.getString("category") ?: "OTHER"
+                                ),
+                                position = Position(
+                                    x = document.getDouble("x")?.toFloat() ?: 0f,
+                                    y = document.getDouble("y")?.toFloat() ?: 0f,
+                                    floor = document.getLong("floor")?.toInt() ?: 1,
+                                    accuracy = document.getDouble("accuracy")?.toFloat() ?: 0f,
+                                    timestamp = document.getLong("timestamp")
+                                        ?: System.currentTimeMillis()
+                                )
+                            )
+                            editablePOIs.add(poi)
+                            android.util.Log.d(
+                                "NavigationRepository",
+                                "Loaded POI: ${poi.name} at (${poi.position.x}, ${poi.position.y})"
+                            )
+                        } catch (e: Exception) {
+                            android.util.Log.e(
+                                "NavigationRepository",
+                                "Error parsing POI document ${document.id}: ${e.message}"
+                            )
+                        }
+                    }
+
+                    android.util.Log.d(
+                        "NavigationRepository",
+                        "Total POIs loaded: ${editablePOIs.size}"
+                    )
+                }
+            }
+    }
+
+    // Load user navigation nodes from Firestore
+    private fun loadNodesFromFirestore() {
+        val userId = auth.currentUser?.uid ?: "guest_user"
+
+        // Load nodes from the current user's collection
+        firestore.collection("nodes")
+            .document(userId)
+            .collection("user_nodes")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    android.util.Log.e(
+                        "NavigationRepository",
+                        "Error loading navigation nodes: ${error.message}"
+                    )
+                    return@addSnapshotListener
+                }
+
+                if (snapshot != null) {
+                    userNodes.clear()
+                    android.util.Log.d(
+                        "NavigationRepository",
+                        "Loading navigation nodes for user: $userId"
+                    )
+                    android.util.Log.d(
+                        "NavigationRepository",
+                        "Found ${snapshot.documents.size} node documents"
+                    )
+
+                    for (document in snapshot.documents) {
+                        try {
+                            val node = NavNode(
+                                id = document.id,
+                                position = Position(
+                                    x = document.getDouble("x")?.toFloat() ?: 0f,
+                                    y = document.getDouble("y")?.toFloat() ?: 0f,
+                                    floor = document.getLong("floor")?.toInt() ?: 1,
+                                    accuracy = document.getDouble("accuracy")?.toFloat() ?: 0f,
+                                    timestamp = document.getLong("timestamp")
+                                        ?: System.currentTimeMillis()
+                                ),
+                                connections = document.get("connections") as? List<String>
+                                    ?: emptyList(),
+                                isWalkable = document.getBoolean("isWalkable") ?: true,
+                                type = NodeType.valueOf(document.getString("type") ?: "WALKWAY"),
+                                isUserCreated = true
+                            )
+                            userNodes.add(node)
+                            android.util.Log.d(
+                                "NavigationRepository",
+                                "Loaded navigation node: ${node.id} at (${node.position.x}, ${node.position.y})"
+                            )
+                        } catch (e: Exception) {
+                            android.util.Log.e(
+                                "NavigationRepository",
+                                "Error parsing node document ${document.id}: ${e.message}"
+                            )
+                        }
+                    }
+
+                    android.util.Log.d(
+                        "NavigationRepository",
+                        "Total navigation nodes loaded: ${userNodes.size}"
+                    )
+                }
+            }
+    }
+
+    // Simplified method to connect all existing nodes (works offline first)
+    fun connectAllNodesOffline(): Int {
+        val connectionDistance = 150f
+        var connectionsAdded = 0
+
+        println("🔗 Starting to connect ${userNodes.size} nodes offline...")
+
+        userNodes.forEachIndexed { index, node ->
+            val nearbyNodes = userNodes.filter { otherNode ->
+                otherNode.id != node.id &&
+                        distance(node.position, otherNode.position) <= connectionDistance &&
+                        otherNode.isWalkable &&
+                        otherNode.type != NodeType.OBSTACLE
+            }
+
+            val newConnections = nearbyNodes.map { it.id }.filter { !node.connections.contains(it) }
+            if (newConnections.isNotEmpty()) {
+                val updatedNode = node.copy(connections = node.connections + newConnections)
+                userNodes[index] = updatedNode
+                connectionsAdded += newConnections.size
+                println("✅ Connected node ${node.id} to ${newConnections.size} new nodes")
+            }
+        }
+
+        println("🔗 Offline connection completed. Added $connectionsAdded connections total.")
+        return connectionsAdded
+    }
+
+    // Add method to connect all existing nodes retroactively
+    suspend fun connectAllNodes(): Int {
+        val connectionDistance = 150f
+        var connectionsAdded = 0
+
+        try {
+            println("🔗 Starting to connect ${userNodes.size} nodes...")
+
+            userNodes.forEachIndexed { index, node ->
+                println("🔗 Processing node ${index + 1}/${userNodes.size}: ${node.id}")
+
+                val nearbyNodes = userNodes.filter { otherNode ->
+                    otherNode.id != node.id &&
+                            distance(node.position, otherNode.position) <= connectionDistance &&
+                            otherNode.isWalkable &&
+                            otherNode.type != NodeType.OBSTACLE
+                }
+
+                println("🔗 Found ${nearbyNodes.size} nearby nodes for ${node.id}")
+
+                val newConnections =
+                    nearbyNodes.map { it.id }.filter { !node.connections.contains(it) }
+                if (newConnections.isNotEmpty()) {
+                    val updatedNode = node.copy(connections = node.connections + newConnections)
+                    userNodes[index] = updatedNode
+
+                    // Try to save to Firestore with error handling
+                    try {
+                        val saved = saveNodeToFirestore(updatedNode)
+                        if (saved) {
+                            connectionsAdded += newConnections.size
+                            println("✅ Connected node ${node.id} to ${newConnections.size} new nodes")
+                        } else {
+                            println("❌ Failed to save node ${node.id} to Firestore")
+                        }
+                    } catch (e: Exception) {
+                        println("❌ Error saving node ${node.id}: ${e.message}")
+                    }
+                } else {
+                    println("ℹ️ Node ${node.id} already has all possible connections")
+                }
+            }
+
+            println("🔗 Connection process completed. Added $connectionsAdded connections total.")
+            return connectionsAdded
+
+        } catch (e: Exception) {
+            println("❌ Error in connectAllNodes: ${e.message}")
+            e.printStackTrace()
+            throw e
+        }
+    }
+
+    // Save POI to Firestore
+    private suspend fun savePOIToFirestore(poi: PointOfInterest): Boolean {
+        return try {
+            val userId = auth.currentUser?.uid ?: "guest_user"
+
+            val poiData = hashMapOf(
+                "name" to poi.name,
+                "description" to poi.description,
+                "category" to poi.category.name,
+                "x" to poi.position.x,
+                "y" to poi.position.y,
+                "floor" to poi.position.floor,
+                "accuracy" to poi.position.accuracy,
+                "timestamp" to poi.position.timestamp
+            )
+
+            firestore.collection("pois")
+                .document(userId)
+                .collection("user_pois")
+                .document(poi.id)
+                .set(poiData)
+                .await()
+
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // Save navigation node to Firestore
+    private suspend fun saveNodeToFirestore(node: NavNode): Boolean {
+        return try {
+            val userId = auth.currentUser?.uid ?: "guest_user"
+
+            val nodeData = hashMapOf(
+                "x" to node.position.x,
+                "y" to node.position.y,
+                "floor" to node.position.floor,
+                "accuracy" to node.position.accuracy,
+                "timestamp" to node.position.timestamp,
+                "connections" to node.connections,
+                "isWalkable" to node.isWalkable,
+                "type" to node.type.name
+            )
+
+            firestore.collection("nodes")
+                .document(userId)
+                .collection("user_nodes")
+                .document(node.id)
+                .set(nodeData)
+                .await()
+
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // Delete POI from Firestore
+    private suspend fun deletePOIFromFirestore(poiId: String): Boolean {
+        return try {
+            val userId = auth.currentUser?.uid ?: "guest_user"
+
+            firestore.collection("pois")
+                .document(userId)
+                .collection("user_pois")
+                .document(poiId)
+                .delete()
+                .await()
+
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // Delete navigation node from Firestore
+    private suspend fun deleteNodeFromFirestore(nodeId: String): Boolean {
+        return try {
+            val userId = auth.currentUser?.uid ?: "guest_user"
+
+            firestore.collection("nodes")
+                .document(userId)
+                .collection("user_nodes")
+                .document(nodeId)
+                .delete()
+                .await()
+
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // Add method to update POI position
+    suspend fun updatePOIPosition(poiId: String, x: Float, y: Float): Boolean {
+        val poi = editablePOIs.find { it.id == poiId }
+        return if (poi != null) {
+            val updatedPOI = poi.copy(position = Position(x, y, poi.position.floor))
+            val index = editablePOIs.indexOf(poi)
+            editablePOIs[index] = updatedPOI
+
+            // Save to Firestore
+            savePOIToFirestore(updatedPOI)
+        } else {
+            false
+        }
+    }
+
+    // Add method to add new POI
+    suspend fun addPOI(name: String, x: Float, y: Float, category: POICategory): PointOfInterest {
+        val newPOI = PointOfInterest(
+            id = "poi_${System.currentTimeMillis()}",
+            name = name,
+            description = "User added POI",
+            category = category,
+            position = Position(x, y, 1)
+        )
+        editablePOIs.add(newPOI)
+
+        // Save to Firestore
+        savePOIToFirestore(newPOI)
+
+        return newPOI
+    }
+
+    // Add method to add new navigation node
+    suspend fun addNode(x: Float, y: Float): NavNode {
+        val newNode = NavNode(
+            id = "node_${System.currentTimeMillis()}",
+            position = Position(x, y, 1),
+            connections = emptyList(),
+            isWalkable = true,
+            type = NodeType.WALKWAY,
+            isUserCreated = true
+        )
+        userNodes.add(newNode)
+
+        // Auto-connect to nearby nodes
+        val updatedNode = autoConnectNode(newNode)
+        val index = userNodes.indexOf(newNode)
+        userNodes[index] = updatedNode
+
+        // Save to Firestore
+        saveNodeToFirestore(updatedNode)
+
+        return updatedNode
+    }
+
+    // Add method to delete POI
+    suspend fun deletePOI(poiId: String): Boolean {
+        val removed = editablePOIs.removeIf { it.id == poiId }
+        if (removed) {
+            // Delete from Firestore
+            deletePOIFromFirestore(poiId)
+        }
+        return removed
+    }
+
+    // Add method to delete navigation node
+    suspend fun deleteNode(nodeId: String): Boolean {
+        val removed = userNodes.removeIf { it.id == nodeId }
+        if (removed) {
+            // Delete from Firestore
+            deleteNodeFromFirestore(nodeId)
+        }
+        return removed
+    }
+
+    // Add method to update navigation node position
+    suspend fun updateNodePosition(nodeId: String, x: Float, y: Float): Boolean {
+        val node = userNodes.find { it.id == nodeId }
+        return if (node != null) {
+            val updatedNode = node.copy(position = Position(x, y, node.position.floor))
+            val index = userNodes.indexOf(node)
+            userNodes[index] = updatedNode
+
+            // Save to Firestore
+            saveNodeToFirestore(updatedNode)
+        } else {
+            false
+        }
+    }
+
+    // Add method to update navigation node connections
+    suspend fun updateNodeConnections(nodeId: String, connections: List<String>): Boolean {
+        val node = userNodes.find { it.id == nodeId }
+        return if (node != null) {
+            val updatedNode = node.copy(connections = connections)
+            val index = userNodes.indexOf(node)
+            userNodes[index] = updatedNode
+
+            // Save to Firestore
+            saveNodeToFirestore(updatedNode)
+        } else {
+            false
+        }
+    }
+
+    // Add method to update navigation node properties
+    suspend fun updateNodeProperties(nodeId: String, isWalkable: Boolean, type: NodeType): Boolean {
+        val node = userNodes.find { it.id == nodeId }
+        return if (node != null) {
+            val updatedNode = node.copy(isWalkable = isWalkable, type = type)
+            val index = userNodes.indexOf(node)
+            userNodes[index] = updatedNode
+
+            // Save to Firestore
+            saveNodeToFirestore(updatedNode)
+        } else {
+            false
+        }
+    }
+
+    // Auto-connect nodes within reasonable distance
+    private fun autoConnectNode(newNode: NavNode): NavNode {
+        val connectionDistance = 150f // Maximum connection distance in pixels
+        val nearbyNodes = userNodes.filter { existingNode ->
+            existingNode.id != newNode.id &&
+                    distance(newNode.position, existingNode.position) <= connectionDistance &&
+                    existingNode.isWalkable &&
+                    existingNode.type != NodeType.OBSTACLE
+        }
+
+        val connections = nearbyNodes.map { it.id }.toMutableList()
+
+        // Also update the nearby nodes to connect back to this new node
+        nearbyNodes.forEach { nearbyNode ->
+            if (!nearbyNode.connections.contains(newNode.id)) {
+                val updatedConnections = nearbyNode.connections + newNode.id
+                val updatedNearbyNode = nearbyNode.copy(connections = updatedConnections)
+                val nearbyIndex = userNodes.indexOf(nearbyNode)
+                userNodes[nearbyIndex] = updatedNearbyNode
+
+                // Save updated nearby node to Firestore
+                kotlin.runCatching {
+                    kotlinx.coroutines.runBlocking { saveNodeToFirestore(updatedNearbyNode) }
+                }
+            }
+        }
+
+        println("🔗 Auto-connected node ${newNode.id} to ${connections.size} nearby nodes")
+        return newNode.copy(connections = connections)
+    }
+
+    private fun distance(pos1: Position, pos2: Position): Float {
+        val dx = pos1.x - pos2.x
+        val dy = pos1.y - pos2.y
+        return kotlin.math.sqrt(dx * dx + dy * dy)
+    }
 
     suspend fun getFloorPlans(buildingId: String): Flow<Result<List<FloorPlan>>> = flow {
         emit(Result.Loading)
@@ -24,8 +555,8 @@ class NavigationRepository {
     }
 
     private fun createComputerScienceBuildingGroundFloor(): FloorPlan {
-        val metersPerPixelX = 75.0f / 1165.149f
-        val metersPerPixelY = 30.0f / 760.814f
+        val metersPerPixelX = 75.0f / 1165.1f
+        val metersPerPixelY = 30.0f / 760.8f
 
         val coordinateSystem = CoordinateSystem(
             originLatitude = 3.071421,
@@ -41,9 +572,9 @@ class NavigationRepository {
             name = "Computer Science Building - Ground Floor",
             imageUrl = "android.resource://com.example.indoornavigation20/drawable/plain_svg",
             svgUrl = "android.resource://com.example.indoornavigation20/drawable/plain_svg",
-            width = 1165.149f,
-            height = 760.814f,
-            nodes = createCSBuildingNavigationNodes(),
+            width = 1165.1f, // Use actual SVG viewBox width
+            height = 760.8f, // Use actual SVG viewBox height
+            nodes = userNodes.filter { it.position.floor == 1 }, // Use user-created nodes
             rooms = createCSBuildingRooms(),
             walls = createCSBuildingWalls(),
             coordinateSystem = coordinateSystem
@@ -299,346 +830,7 @@ class NavigationRepository {
     }
 
     private fun createCSBuildingNavigationNodes(): List<NavNode> {
-        // All coordinates are NEW ESTIMATES based on visual alignment with:
-        // 1. User's blue line drawing ("20-56-...png")
-        // 2. User's cleaner POI map ("new_map_layout.png")
-        // 3. Target canvas dimensions: 1165.149f (width) x 760.814f (height)
-        // The node IDs and general connection structure are from the user's last provided NavNode list.
-
-        return listOf(
-            // === ENTRANCES (Green) ===
-            // West Entrance (bottom-left of overall structure on blue line map)
-            NavNode(
-                id = "ENTRANCE_WEST",
-                position = Position(80f, 560f, 1),
-                connections = listOf("W_CORRIDOR_1"),
-                type = NodeType.DOOR
-            ),
-            // Main South Entrance (bottom-center on blue line map) - THIS WILL BE DEMO START
-            NavNode(
-                id = "ENTRANCE_MAIN_SOUTH",
-                position = Position(582f, 740f, 1),
-                connections = listOf("SOUTH_CORRIDOR_1"),
-                type = NodeType.DOOR
-            ),
-            // North-East Entrance (top-right on blue line map)
-            NavNode(
-                id = "ENTRANCE_EAST",
-                position = Position(1100f, 180f, 1),
-                connections = listOf("EAST_CORRIDOR_1_FROM_ENTRANCE"),
-                type = NodeType.DOOR
-            ),
-
-            // === SOUTH CORRIDOR (from main entrance northwards, then west to theaters) ===
-            NavNode(
-                id = "SOUTH_CORRIDOR_1",
-                position = Position(582f, 680f, 1),
-                connections = listOf("ENTRANCE_MAIN_SOUTH", "SOUTH_CORRIDOR_2")
-            ),
-            NavNode(
-                id = "SOUTH_CORRIDOR_2",
-                position = Position(582f, 620f, 1),
-                connections = listOf(
-                    "SOUTH_CORRIDOR_1",
-                    "TH_HALL_CORRIDOR_EAST_END",
-                    "CENTRAL_JUNCTION_SOUTH_POINT"
-                )
-            ),
-
-            // === THEATER HALLS CORRIDOR (runs west from SOUTH_CORRIDOR_2) ===
-            NavNode(
-                id = "TH_HALL_CORRIDOR_EAST_END",
-                position = Position(500f, 620f, 1),
-                connections = listOf("SOUTH_CORRIDOR_2", "TH3_DOOR_NODE", "TH_HALL_CORRIDOR_MID")
-            ),
-            NavNode(
-                id = "TH3_DOOR_NODE",
-                position = Position(500f, 670f, 1),
-                connections = listOf("TH_HALL_CORRIDOR_EAST_END"),
-                type = NodeType.DOOR
-            ), // TH3 (est based on relative pos)
-            NavNode(
-                id = "TH_HALL_CORRIDOR_MID",
-                position = Position(380f, 620f, 1),
-                connections = listOf(
-                    "TH_HALL_CORRIDOR_EAST_END",
-                    "TH2_DOOR_NODE",
-                    "TH_HALL_CORRIDOR_WEST_END"
-                )
-            ),
-            NavNode(
-                id = "TH2_DOOR_NODE",
-                position = Position(380f, 670f, 1),
-                connections = listOf("TH_HALL_CORRIDOR_MID"),
-                type = NodeType.DOOR
-            ),    // TH2 (est)
-            NavNode(
-                id = "TH_HALL_CORRIDOR_WEST_END",
-                position = Position(250f, 620f, 1),
-                connections = listOf(
-                    "TH_HALL_CORRIDOR_MID",
-                    "TH1_DOOR_NODE",
-                    "W_CORRIDOR_JUNCTION_SOUTH"
-                )
-            ),
-            NavNode(
-                id = "TH1_DOOR_NODE",
-                position = Position(250f, 670f, 1),
-                connections = listOf("TH_HALL_CORRIDOR_WEST_END"),
-                type = NodeType.DOOR
-            ),    // TH1 (est)
-
-            // === WEST CORRIDOR (from ENTRANCE_WEST northwards, then east) ===
-            NavNode(
-                id = "W_CORRIDOR_1",
-                position = Position(150f, 560f, 1),
-                connections = listOf("ENTRANCE_WEST", "W_CORRIDOR_JUNCTION_SOUTH")
-            ), // Path from west entrance
-            NavNode(
-                id = "W_CORRIDOR_JUNCTION_SOUTH",
-                position = Position(250f, 560f, 1),
-                connections = listOf(
-                    "W_CORRIDOR_1",
-                    "TH_HALL_CORRIDOR_WEST_END",
-                    "PENTADBIRAN_ACCESS_CORRIDOR"
-                )
-            ),
-            NavNode(
-                id = "PENTADBIRAN_ACCESS_CORRIDOR",
-                position = Position(250f, 400f, 1),
-                connections = listOf(
-                    "W_CORRIDOR_JUNCTION_SOUTH",
-                    "PENTADBIRAN_DOOR_NODE",
-                    "TANDAS_L_DOOR_NODE"
-                )
-            ),
-            NavNode(
-                id = "PENTADBIRAN_DOOR_NODE",
-                position = Position(250f, 270f, 1),
-                connections = listOf("PENTADBIRAN_ACCESS_CORRIDOR"),
-                type = NodeType.DOOR
-            ), // Pejabot Pentadbiran
-            NavNode(
-                id = "TANDAS_L_DOOR_NODE",
-                position = Position(250f, 470f, 1),
-                connections = listOf("PENTADBIRAN_ACCESS_CORRIDOR"),
-                type = NodeType.DOOR
-            ), // Tandas L
-
-            // === CENTRAL JUNCTION & Laman Najib area ===
-            // Node representing the southern approach to the central courtyard/junction area from Main South Corridor
-            NavNode(
-                id = "CENTRAL_JUNCTION_SOUTH_POINT",
-                position = Position(582f, 500f, 1),
-                connections = listOf(
-                    "SOUTH_CORRIDOR_2",
-                    "LAMAN_NAJIB_SOUTH_NODE",
-                    "LIFT_ACCESS_CORRIDOR_SOUTH"
-                )
-            ),
-            NavNode(
-                id = "LAMAN_NAJIB_SOUTH_NODE",
-                position = Position(582f, 430f, 1),
-                connections = listOf("CENTRAL_JUNCTION_SOUTH_POINT", "LAMAN_NAJIB_CENTER_NODE")
-            ), // Path into Laman Najib
-            NavNode(
-                id = "LAMAN_NAJIB_CENTER_NODE",
-                position = Position(582f, 380f, 1),
-                connections = listOf(
-                    "LAMAN_NAJIB_SOUTH_NODE",
-                    "LIFT_ACCESS_CORRIDOR_NORTH",
-                    "AKADEMIK_ACCESS_CORRIDOR_SOUTH"
-                )
-            ), // Center of Laman Najib
-
-            // Lift and Paths around it (West of Laman Najib Center)
-            NavNode(
-                id = "LIFT_ACCESS_CORRIDOR_SOUTH",
-                position = Position(450f, 500f, 1),
-                connections = listOf("CENTRAL_JUNCTION_SOUTH_POINT", "LIFT_ACCESS_CORRIDOR_NORTH")
-            ), // Path on west side of Laman Najib
-            NavNode(
-                id = "LIFT_ACCESS_CORRIDOR_NORTH",
-                position = Position(450f, 380f, 1),
-                connections = listOf(
-                    "LIFT_ACCESS_CORRIDOR_SOUTH",
-                    "LAMAN_NAJIB_CENTER_NODE",
-                    "LIFT_NODE"
-                )
-            ),
-            NavNode(
-                id = "LIFT_NODE",
-                position = Position(450f, 270f, 1),
-                connections = listOf("LIFT_ACCESS_CORRIDOR_NORTH"),
-                type = NodeType.ELEVATOR
-            ), // RED LIFT (New visually estimated position)
-
-            // Academic Offices & Tandas P (North of Laman Najib / Lift)
-            NavNode(
-                id = "AKADEMIK_ACCESS_CORRIDOR_SOUTH",
-                position = Position(582f, 250f, 1),
-                connections = listOf("LAMAN_NAJIB_CENTER_NODE", "AKADEMIK_ACCESS_CORRIDOR_NORTH")
-            ),
-            NavNode(
-                id = "AKADEMIK_ACCESS_CORRIDOR_NORTH",
-                position = Position(582f, 180f, 1),
-                connections = listOf(
-                    "AKADEMIK_ACCESS_CORRIDOR_SOUTH",
-                    "AKADEMIK_DOOR_NODE",
-                    "TANDAS_P_ADMIN_DOOR_NODE",
-                    "NE_CORRIDOR_JUNCTION_WEST"
-                )
-            ),
-            NavNode(
-                id = "AKADEMIK_DOOR_NODE",
-                position = Position(582f, 100f, 1),
-                connections = listOf("AKADEMIK_ACCESS_CORRIDOR_NORTH"),
-                type = NodeType.DOOR
-            ), // Pejabot Akademik
-            NavNode(
-                id = "TANDAS_P_ADMIN_DOOR_NODE",
-                position = Position(700f, 100f, 1),
-                connections = listOf("AKADEMIK_ACCESS_CORRIDOR_NORTH"),
-                type = NodeType.DOOR
-            ), // Tandas P (Admin)
-
-            // === Path from Central Area (Laman Najib) to East Wing === 
-            // (This is the HORIZONTAL BLUE LINE running across the middle of user's drawing)
-            NavNode(
-                id = "X_TO_COURTYARD_EAST_PATH_1",
-                position = Position(800f, 620f, 1),
-                connections = listOf("CENTRAL_JUNCTION_SOUTH_POINT", "X_TO_COURTYARD_EAST_PATH_2")
-            ), // From main X, going East
-            NavNode(
-                id = "X_TO_COURTYARD_EAST_PATH_2",
-                position = Position(950f, 620f, 1),
-                connections = listOf("X_TO_COURTYARD_EAST_PATH_1", "X_TO_COURTYARD_EAST_PATH_3")
-            ),
-            NavNode(
-                id = "X_TO_COURTYARD_EAST_PATH_3",
-                position = Position(1080f, 580f, 1),
-                connections = listOf("X_TO_COURTYARD_EAST_PATH_2", "EAST_WING_VERTICAL_SOUTH_END")
-            ), // End of horizontal, before turning up into East Wing
-
-            // === East Wing Vertical Corridor & Branches ===
-            NavNode(
-                id = "EAST_WING_VERTICAL_SOUTH_END",
-                position = Position(1080f, 500f, 1),
-                connections = listOf(
-                    "X_TO_COURTYARD_EAST_PATH_3",
-                    "EAST_WING_MID_JUNCTION",
-                    "CAFE_ACCESS_PATH",
-                    "STAIRS_E_S_MID"
-                )
-            ), // Bottom of East Wing vertical
-            NavNode(
-                id = "CAFE_ACCESS_PATH",
-                position = Position(1080f, 550f, 1),
-                connections = listOf("EAST_WING_VERTICAL_SOUTH_END", "CAFE_DOOR_NODE")
-            ), // Path to Cafe
-            NavNode(
-                id = "CAFE_DOOR_NODE",
-                position = Position(1100f, 580f, 1),
-                connections = listOf("CAFE_ACCESS_PATH"),
-                type = NodeType.DOOR
-            ), // Cafe Door
-
-            NavNode(
-                id = "EAST_WING_MID_JUNCTION",
-                position = Position(1080f, 380f, 1),
-                connections = listOf(
-                    "EAST_WING_VERTICAL_SOUTH_END",
-                    "EAST_WING_VERTICAL_NORTH_END",
-                    "TH4_ACCESS_PATH"
-                )
-            ), // Mid-point of East Wing Vertical, TH4 branches West
-            NavNode(
-                id = "TH4_ACCESS_PATH",
-                position = Position(1000f, 380f, 1),
-                connections = listOf("EAST_WING_MID_JUNCTION", "TH4_DOOR_NODE")
-            ), // Path to TH4 door
-            NavNode(
-                id = "TH4_DOOR_NODE",
-                position = Position(950f, 317f, 1),
-                connections = listOf("TH4_ACCESS_PATH"),
-                type = NodeType.DOOR
-            ), // TH4 Door (Est from POI map)
-
-            NavNode(
-                id = "EAST_WING_VERTICAL_NORTH_END",
-                position = Position(1080f, 220f, 1),
-                connections = listOf(
-                    "EAST_WING_MID_JUNCTION",
-                    "NE_CORRIDOR_JUNCTION_EAST",
-                    "STAIRS_E_N_MID"
-                )
-            ), // Top of East Wing Vertical
-
-            // === Path from North-East Entrance (ENTRANCE_NORTH_EAST at 1180,80) ===
-            NavNode(
-                id = "NE_CORRIDOR_1",
-                position = Position(1100f, 180f, 1),
-                connections = listOf(
-                    "ENTRANCE_EAST",
-                    "AKADEMIK_ACCESS_CORRIDOR_NORTH",
-                    "NE_CORRIDOR_JUNCTION_EAST"
-                )
-            ),
-            NavNode(
-                id = "NE_CORRIDOR_JUNCTION_EAST",
-                position = Position(1080f, 180f, 1),
-                connections = listOf(
-                    "NE_CORRIDOR_1",
-                    "EAST_WING_VERTICAL_NORTH_END",
-                    "UNIT_CAWANGAN_DOOR_NODE",
-                    "TH5_DOOR_NODE"
-                )
-            ), // Junction for Unit Cawangan & TH5
-            NavNode(
-                id = "UNIT_CAWANGAN_DOOR_NODE",
-                position = Position(1000f, 131f, 1),
-                connections = listOf("NE_CORRIDOR_JUNCTION_EAST"),
-                type = NodeType.DOOR
-            ), // Unit Cawangan
-            NavNode(
-                id = "TH5_DOOR_NODE",
-                position = Position(1000f, 222f, 1),
-                connections = listOf("NE_CORRIDOR_JUNCTION_EAST"),
-                type = NodeType.DOOR
-            ), // TH5
-
-            // === YELLOW STAIRS (Re-estimated positions, connected to nearest appropriate node) ===
-            NavNode(
-                id = "STAIRS_W1",
-                position = Position(180f, 620f, 1),
-                connections = listOf("W_CORRIDOR_2"),
-                type = NodeType.STAIRS
-            ),      // Near TH1/West Entrance
-            NavNode(
-                id = "STAIRS_S1",
-                position = Position(730f, 730f, 1),
-                connections = listOf("M_CORRIDOR_2_INTERSECTION"),
-                type = NodeType.STAIRS
-            ), // South near TH3
-            NavNode(
-                id = "STAIRS_NW1",
-                position = Position(700f, 150f, 1),
-                connections = listOf("AKADEMIK_ACCESS_CORRIDOR_NORTH"),
-                type = NodeType.STAIRS
-            ), // Top-Left near Akademik/Tandas P
-            NavNode(
-                id = "STAIRS_E_S_MID",
-                position = Position(1110f, 500f, 1),
-                connections = listOf("EAST_WING_VERTICAL_SOUTH_END"),
-                type = NodeType.STAIRS
-            ), // East Wing, south part of vertical
-            NavNode(
-                id = "STAIRS_E_N_MID",
-                position = Position(1110f, 220f, 1),
-                connections = listOf("EAST_WING_VERTICAL_NORTH_END"),
-                type = NodeType.STAIRS
-            )  // East Wing, north part of vertical
-        )
+        return emptyList() // Remove all hardcoded nodes - user will place their own
     }
 
     suspend fun searchPOIs(query: String): Flow<Result<List<PointOfInterest>>> = flow {
@@ -646,169 +838,11 @@ class NavigationRepository {
         try {
             kotlinx.coroutines.delay(500)
 
-            // POI Coordinates meticulously re-estimated based on the user-provided image 
-            // "image_with_poi_labels.png" (showing POIs within their boxes) and scaled 
-            // to the 1165.149f (width) x 760.814f (height) canvas.
-            val allPOIs = listOf(
-                // Bottom Row Theaters (from left to right)
-                PointOfInterest(
-                    id = "th1_poi",
-                    name = "TH 1",
-                    description = "Theater Hall 1",
-                    category = POICategory.CLASSROOM,
-                    position = Position(160f, 705f, 1)
-                ),
-                PointOfInterest(
-                    id = "th2_poi",
-                    name = "TH 2",
-                    description = "Theater Hall 2",
-                    category = POICategory.CLASSROOM,
-                    position = Position(320f, 705f, 1)
-                ),
-                PointOfInterest(
-                    id = "th3_poi",
-                    name = "TH 3",
-                    description = "Theater Hall 3",
-                    category = POICategory.CLASSROOM,
-                    position = Position(480f, 705f, 1)
-                ),
-
-                // Admin Block (Left Side)
-                PointOfInterest(
-                    id = "pejabot_pentadbiran_poi",
-                    name = "Pejabat Pengurusan Pentadbiran FSKM",
-                    description = "FSKM Admin Office",
-                    category = POICategory.OFFICE,
-                    position = Position(230f, 270f, 1)
-                ),
-                PointOfInterest(
-                    id = "tandas_l_poi",
-                    name = "Tandas (L)",
-                    description = "Ladies Restroom (West)",
-                    category = POICategory.RESTROOM,
-                    position = Position(230f, 480f, 1)
-                ),
-                // The "a" region in Pejabat Pentadbiran FSKM is not made a separate POI unless specified.
-
-                // Central Area
-                PointOfInterest(
-                    id = "lift_poi",
-                    name = "Lif",
-                    description = "Elevator",
-                    category = POICategory.ELEVATOR,
-                    position = Position(430f, 270f, 1)
-                ),
-                PointOfInterest(
-                    id = "laman_najib_poi",
-                    name = "Laman Najib",
-                    description = "Central Courtyard",
-                    category = POICategory.LOBBY,
-                    position = Position(580f, 380f, 1)
-                ),
-                PointOfInterest(
-                    id = "pejabot_akademik_poi",
-                    name = "Pejabot Pengurusan Akademik",
-                    description = "Academic Office",
-                    category = POICategory.OFFICE,
-                    position = Position(530f, 135f, 1)
-                ),
-                PointOfInterest(
-                    id = "tandas_p_admin_poi",
-                    name = "Tandas (P) Admin",
-                    description = "Men's Restroom (near Akademik)",
-                    category = POICategory.RESTROOM,
-                    position = Position(700f, 135f, 1)
-                ),
-                // The "a" region in Pejabot Pengurusan Akademik is not made a separate POI.
-
-                // South-East Area (near bottom-right of Laman Najib)
-                PointOfInterest(
-                    id = "surau_p_dewan_poi",
-                    name = "Surau (P)",
-                    description = "Women's Prayer Room (Dewan Area)",
-                    category = POICategory.PRAYER_ROOM,
-                    position = Position(780f, 560f, 1)
-                ),
-                PointOfInterest(
-                    id = "tandas_p_dewan_poi",
-                    name = "Tandas (P) Dewan",
-                    description = "Men's Restroom (Dewan Area)",
-                    category = POICategory.RESTROOM,
-                    position = Position(780f, 600f, 1)
-                ),
-                PointOfInterest(
-                    id = "bilik_karspersky_poi",
-                    name = "Bilik Kaspersky",
-                    description = "Kaspersky Lab",
-                    category = POICategory.LAB,
-                    position = Position(900f, 490f, 1)
-                ),
-
-                // East Wing (Top Right)
-                PointOfInterest(
-                    id = "unit_cawangan_poi",
-                    name = "Unit Cawangan Zon 4",
-                    description = "Zone 4 Unit",
-                    category = POICategory.OFFICE,
-                    position = Position(930f, 90f, 1)
-                ),
-                PointOfInterest(
-                    id = "th5_poi",
-                    name = "TH 5",
-                    description = "Theater Hall 5",
-                    category = POICategory.CLASSROOM,
-                    position = Position(930f, 195f, 1)
-                ),
-                PointOfInterest(
-                    id = "th4_poi",
-                    name = "TH 4",
-                    description = "Theater Hall 4",
-                    category = POICategory.CLASSROOM,
-                    position = Position(930f, 300f, 1)
-                ),
-                PointOfInterest(
-                    id = "tandas_l_east_poi",
-                    name = "Tandas (L) East",
-                    description = "Ladies Restroom (East Wing)",
-                    category = POICategory.RESTROOM,
-                    position = Position(930f, 405f, 1)
-                ), // Labeled Tandas (L) in East Wing
-                PointOfInterest(
-                    id = "cafe_poi",
-                    name = "Cafe",
-                    description = "Campus Cafe",
-                    category = POICategory.CAFETERIA,
-                    position = Position(1030f, 460f, 1)
-                ),
-
-                // Entrances (using visual estimations from blue line map for consistency with NavNodes later)
-                PointOfInterest(
-                    id = "main_entrance_south_poi",
-                    name = "Main Entrance (South)",
-                    description = "Main South Entrance",
-                    category = POICategory.ENTRANCE,
-                    position = Position(582f, 740f, 1)
-                ),
-                PointOfInterest(
-                    id = "west_entrance_poi",
-                    name = "West Entrance",
-                    description = "Side West Entrance",
-                    category = POICategory.ENTRANCE,
-                    position = Position(80f, 560f, 1)
-                ),
-                PointOfInterest(
-                    id = "east_entrance_ne_poi",
-                    name = "NE Entrance",
-                    description = "Side North-East Entrance",
-                    category = POICategory.ENTRANCE,
-                    position = Position(1100f, 180f, 1)
-                )
-            )
-
+            // Use the editable POIs instead of hardcoded ones
             val filteredPOIs = if (query.isBlank()) {
-                allPOIs
+                editablePOIs.toList()
             } else {
-                allPOIs.filter {
+                editablePOIs.filter {
                     it.name.contains(query, ignoreCase = true) ||
                             it.description.contains(query, ignoreCase = true) ||
                             it.category.name.contains(query, ignoreCase = true)
@@ -892,5 +926,9 @@ class NavigationRepository {
             description = "Modern computer science facility with research labs, lecture halls, and student areas",
             floors = listOf(1, 2, 3)
         )
+    }
+
+    private fun getDefaultPOIs(): List<PointOfInterest> {
+        return emptyList() // Only show user-added POIs
     }
 }

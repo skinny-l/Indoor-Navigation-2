@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "87138489227",
+    "project_id": "indoor-navigation2",
+    "storage_bucket": "indoor-navigation2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:87138489227:android:c4ed86023b2df80e46558e",
+        "android_client_info": {
+          "package_name": "com.example.indoornavigation20"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDlyRJFgoWxCIBH5l9SukpX2NKi1CZOyDw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

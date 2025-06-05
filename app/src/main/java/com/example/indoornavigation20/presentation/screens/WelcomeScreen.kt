@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun WelcomeScreen(
     onNavigateToLogin: () -> Unit,
+    onNavigateToSignUp: () -> Unit,
     onNavigateToMain: () -> Unit
 ) {
     Column(
@@ -57,6 +58,17 @@ fun WelcomeScreen(
                 .height(56.dp)
         ) {
             Text("Sign In")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = onNavigateToSignUp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+        ) {
+            Text("Sign Up")
         }
 
         Spacer(modifier = Modifier.height(16.dp))
