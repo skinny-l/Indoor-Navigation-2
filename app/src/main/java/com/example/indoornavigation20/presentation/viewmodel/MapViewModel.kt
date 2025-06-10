@@ -11,6 +11,7 @@ import com.example.indoornavigation20.navigation.NavigationPath
 import com.example.indoornavigation20.navigation.PathfindingEngine
 import com.example.indoornavigation20.positioning.PositioningEngine
 import com.example.indoornavigation20.positioning.BuildingDetector
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -61,11 +62,18 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
         buildingDetector?.let { detector ->
             detector.startDetection()
 
+            // Connect building detector to positioning engine
+            positioningEngine.setBuildingDetector(detector)
+
             // Observe building status changes
             viewModelScope.launch {
                 detector.isInsideBuilding.collect { isInside ->
                     println("🏢 Building status changed: ${if (isInside) "INSIDE" else "OUTSIDE"}")
-                    // You can update UI state here if needed
+                    // If user goes outside, clear current position to avoid confusion
+                    if (!isInside) {
+                        // Position will be cleared automatically by positioning engine now
+                        println("🚪 User detected outside - indoor position will be cleared")
+                    }
                 }
             }
 
@@ -101,7 +109,8 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
         viewModelScope.launch {
             positioningEngine.currentPosition.collect { position ->
                 val previousPosition = _uiState.value.currentPosition
-                _uiState.value = _uiState.value.copy(currentPosition = position)
+                val updatedState = _uiState.value.copy(currentPosition = position)
+                _uiState.value = updatedState
 
                 // Clear navigation path when position becomes unavailable
                 if (position == null && previousPosition != null) {
@@ -163,6 +172,9 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
                                 availableFloors = floorPlans.keys.sorted(),
                                 building = building
                             )
+
+                            // CRITICAL: Refresh floor plans when nodes are loaded
+                            refreshFloorPlans()
                         }
 
                         is Result.Error -> {
@@ -224,18 +236,66 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
         }
     }
 
-    fun connectAllExistingNodes() {
-        try {
-            val connectionsAdded = repository.connectAllNodesOffline()
-            _uiState.value = _uiState.value.copy(
-                errorMessage = "✅ Connected existing nodes! Added $connectionsAdded connections. Try navigation now."
-            )
-            loadUserNodes() // Refresh to show updated connections
-        } catch (e: Exception) {
-            _uiState.value = _uiState.value.copy(
-                errorMessage = "❌ Failed to connect nodes: ${e.message}"
-            )
+    fun forceReloadAllData() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            try {
+                val result = repository.forceReloadAllData()
+                loadUserNodes()// Refresh the UI
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = result
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = "Force reload failed: ${e.message}"
+                )
+            }
         }
+    }
+
+    fun connectAllExistingNodes() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+
+            try {
+                // FORCE reload nodes from Firebase first
+                repository.reloadNodes()
+
+                // Wait for Firebase, respond
+                kotlinx.coroutines.delay(3000)
+
+                // Now get the nodes,
+
+
+                val allNodes = repository.getUserNodes()
+                val currentFloor = _uiState.value.currentFloor
+                val nodesOnThisFloor = allNodes.filter { it.position.floor == currentFloor }
+
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = "🔍 DIAGNOSTIC: Found ${allNodes.size} total nodes, ${nodesOnThisFloor.size} on floor $currentFloor"
+                )
+
+                // Refresh, floor plans
+                loadUserNodes()
+                refreshFloorPlans()
+
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = "❌ Error: ${e.message}"
+                )
+            }
+        }
+    }
+
+    // Helper function to calculate distance between positions
+    private fun distance(pos1: Position, pos2: Position): Float {
+        val dx = pos1.x - pos2.x
+        val dy = pos1.y - pos2.y
+        return kotlin.math.sqrt(dx * dx + dy * dy)
     }
 
     fun selectPOI(poi: PointOfInterest) {
@@ -282,15 +342,12 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
             repository.searchPOIs(query).collect { result ->
                 when (result) {
                     is Result.Success -> {
-                        _uiState.value = _uiState.value.copy(
-                            searchResults = result.data
-                        )
+                        _uiState.value = _uiState.value.copy(searchResults = result.data)
                     }
 
                     is Result.Error -> {
-                        _uiState.value = _uiState.value.copy(
-                            errorMessage = result.exception.message
-                        )
+                        _uiState.value =
+                            _uiState.value.copy(errorMessage = result.exception.message)
                     }
 
                     is Result.Loading -> {
@@ -429,7 +486,7 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
         return buildingDetector?.detectionMethod?.value ?: "Unknown"
     }
 
-    fun centerOnCurrentLocation() {
+    fun centerOnCurrentLocations() {
         val currentPos = _uiState.value.currentPosition
         if (currentPos != null) {
             // In a real implementation, this would trigger the map component to center on position
@@ -518,7 +575,7 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
                 val permissions = userManager.getUserPermissions()
                 if (permissions.canAddPOI) {
                     val newPOI = repository.addPOI(name, x, y, category)
-                    // Refresh POI search to update the displayed POIs
+                    // Refresh POI search to update the, PO
                     searchPOIs("")
                 } else {
                     _uiState.value = _uiState.value.copy(
@@ -541,7 +598,7 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
                 if (permissions.canEditPOI) {
                     val success = repository.updatePOIPosition(poiId, x, y)
                     if (success) {
-                        // Refresh POI search to update the displayed POIs
+                        // Refresh POI search to update the, PO
                         searchPOIs("")
                     } else {
                         _uiState.value = _uiState.value.copy(
@@ -573,7 +630,7 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
                         if (_uiState.value.selectedPOI?.id == poiId) {
                             _uiState.value = _uiState.value.copy(selectedPOI = null)
                         }
-                        // Refresh POI search to update the displayed POIs
+                        // Refresh POI search to update the, PO
                         searchPOIs("")
                     } else {
                         _uiState.value = _uiState.value.copy(
@@ -603,7 +660,7 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
 
     fun reloadPOIs() {
         repository.reloadPOIs()
-        // Also refresh the search to update UI
+        // Also refresh the search, update the, UI
         searchPOIs("")
     }
 
@@ -625,7 +682,7 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
                 val permissions = userManager.getUserPermissions()
                 if (permissions.canAddPOI) { // Reusing POI permissions for nodes
                     val newNode = repository.addNode(x, y)
-                    loadUserNodes() // Refresh nodes
+                    loadUserNodes()// Refresh nodes
                     _uiState.value = _uiState.value.copy(
                         selectedNode = newNode,
                         errorMessage = "Navigation node added at (${x.toInt()}, ${y.toInt()})"
@@ -650,7 +707,7 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
                 if (permissions.canEditPOI) { // Reusing POI permissions for nodes
                     val success = repository.updateNodePosition(nodeId, x, y)
                     if (success) {
-                        loadUserNodes() // Refresh nodes
+                        loadUserNodes()// Refresh nodes
                         _uiState.value = _uiState.value.copy(
                             errorMessage = "Node position updated"
                         )
@@ -683,7 +740,7 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
                         if (_uiState.value.selectedNode?.id == nodeId) {
                             _uiState.value = _uiState.value.copy(selectedNode = null)
                         }
-                        loadUserNodes() // Refresh nodes
+                        loadUserNodes()// Refresh nodes
                         _uiState.value = _uiState.value.copy(
                             errorMessage = "Navigation node deleted"
                         )
@@ -712,7 +769,7 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
                 if (permissions.canEditPOI) { // Reusing POI permissions for nodes
                     val success = repository.updateNodeConnections(nodeId, connectedNodeIds)
                     if (success) {
-                        loadUserNodes() // Refresh nodes
+                        loadUserNodes()// Refresh nodes
                         _uiState.value = _uiState.value.copy(
                             errorMessage = "Node connections updated"
                         )
@@ -746,5 +803,293 @@ class MapViewModel(private val context: Context? = null) : ViewModel() {
     fun showNodeStorageInfo() {
         val storageInfo = repository.getNodeStorageInfo()
         _uiState.value = _uiState.value.copy(errorMessage = storageInfo)
+    }
+
+    // Add this new function to refresh floor plans with updated nodes
+    private fun refreshFloorPlans() {
+        viewModelScope.launch {
+            try {
+                // Force refresh floor plans with current nodes
+                repository.getFloorPlans("computer_science_building").collect { result ->
+                    when (result) {
+                        is Result.Success -> {
+                            result.data.forEach { floorPlan ->
+                                floorPlans[floorPlan.floorNumber] = floorPlan
+                            }
+
+                            val currentFloorPlan = floorPlans[_uiState.value.currentFloor]
+                            _uiState.value = _uiState.value.copy(
+                                currentFloorPlan = currentFloorPlan
+                            )
+                        }
+
+                        else -> { /* ignore */
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore refresh errors
+            }
+        }
+    }
+
+    // Enhanced method to connect all nodes with better feedback
+    fun connectAllNodesEnhanced() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.value =
+                _uiState.value.copy(isLoading = true, errorMessage = "🔄 Connecting nodes...")
+
+            try {
+                // First validate and fix any broken connections,
+                val validationResult = repository.validateAndFixConnections()
+                println(validationResult)
+
+                // Then connect all nodes
+                val connectionResult = repository.connectAllNodesImproved()
+
+                // Reload nodes, refresh floor plans,
+                loadUserNodes()
+                refreshFloorPlans()
+
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = connectionResult
+                )
+
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = "❌ Connection failed: ${e.message}"
+                )
+            }
+        }
+    }
+
+    // Method to rebuild the, connection network
+    fun rebuildConnectionNetwork() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.value = _uiState.value.copy(
+                isLoading = true,
+                errorMessage = "🔄 Rebuilding connection network..."
+            )
+
+            try {
+                val result = repository.rebuildConnectionNetwork()
+
+                // Reload everything,
+                loadUserNodes()
+                refreshFloorPlans()
+
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = result
+                )
+
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = "❌ Rebuild failed: ${e.message}"
+                )
+            }
+        }
+    }
+
+    // Enhanced add node method with better connection handling
+    fun addNodeEnhanced(x: Float, y: Float) {
+        viewModelScope.launch {
+            try {
+                val permissions = userManager.getUserPermissions()
+                if (permissions.canAddPOI) {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "🔄 Adding node and establishing connections..."
+                    )
+
+                    val newNode = repository.addNodeWithSmartConnection(x, y)
+
+                    // Refresh, floor plans,
+                    loadUserNodes()
+                    refreshFloorPlans()
+
+                    _uiState.value = _uiState.value.copy(
+                        selectedNode = newNode,
+                        errorMessage = "✅ Node added at (${x.toInt()}, ${y.toInt()}) with ${newNode.connections.size} connections"
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "❌ You don't have permission to add navigation nodes"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "❌ Failed to add navigation node: ${e.message}"
+                )
+            }
+        }
+    }
+
+    // Method to test pathfinding between two specific nodes
+    fun testPathfinding(startNodeId: String, goalNodeId: String) {
+        viewModelScope.launch {
+            try {
+                val nodes = _uiState.value.userNodes
+                val startNode = nodes.find { it.id == startNodeId }
+                val goalNode = nodes.find { it.id == goalNodeId }
+
+                if (startNode == null || goalNode == null) {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "❌ Could not find specified nodes"
+                    )
+                    return@launch
+                }
+
+                val startPos = startNode.position
+                val goalPos = goalNode.position
+
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "🧪 Testing pathfinding from ${startNode.id.takeLast(4)} to ${
+                        goalNode.id.takeLast(
+                            4
+                        )
+                    }"
+                )
+
+                val path = pathfindingEngine.findPath(
+                    start = startPos,
+                    goal = goalPos,
+                    floorPlans = floorPlans
+                )
+
+                _uiState.value = _uiState.value.copy(
+                    navigationPath = path,
+                    errorMessage = "✅ Test path found with ${path.steps.size} steps"
+                )
+
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "❌ Pathfinding test failed: ${e.message}"
+                )
+            }
+        }
+    }
+
+    // Enhanced navigation method with better debugging
+    fun navigateToEnhanced(destination: Position) {
+        val currentPosition = _uiState.value.currentPosition
+        val isInside = buildingDetector?.isInsideBuilding?.value ?: false
+
+        // Determine start position with better logic
+        val startPosition = when {
+            currentPosition != null && isInside && currentPosition.accuracy <= 10f -> {
+                println("📍 Using verified indoor position: (${currentPosition.x}, ${currentPosition.y}) accuracy: ${currentPosition.accuracy}m")
+                currentPosition
+            }
+
+            else -> {
+                val entrance = getCurrentSelectedEntrance()
+                if (entrance != null) {
+                    val status =
+                        if (isInside) "inside but no accurate position" else "outside building"
+                    println("🚪 User $status, starting from entrance: ${entrance.name} at (${entrance.position.x}, ${entrance.position.y})")
+                    entrance.position
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "❌ Cannot navigate: No entrance POIs available and no indoor position. Please add entrance POIs first."
+                    )
+                    return
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "🧭 Calculating route..."
+                )
+
+                // Debug: Check available nodes
+                val currentFloorPlan = floorPlans[startPosition.floor]
+                val nodeCount = currentFloorPlan?.nodes?.size ?: 0
+                println("🗺️ Available nodes on floor ${startPosition.floor}: $nodeCount")
+
+                val path = pathfindingEngine.findPath(
+                    start = startPosition,
+                    goal = destination,
+                    floorPlans = floorPlans
+                )
+
+                val statusMessage = when {
+                    currentPosition != null && isInside && currentPosition.accuracy <= 10f ->
+                        "📍 Route from your current location (${currentPosition.accuracy.toInt()}m accuracy)"
+
+                    isInside && (currentPosition == null || currentPosition.accuracy > 10f) -> {
+                        val entranceName = getCurrentSelectedEntrance()?.name ?: "entrance"
+                        "🚪 Using $entranceName as start (indoor position unavailable/inaccurate)"
+                    }
+
+                    !isInside -> {
+                        val entranceName = getCurrentSelectedEntrance()?.name ?: "entrance"
+                        "🚪 Route from $entranceName (you are outside building)"
+                    }
+
+                    else -> "📍 Navigation route calculated"
+                }
+
+                _uiState.value = _uiState.value.copy(
+                    navigationPath = path,
+                    errorMessage = "$statusMessage - ${path.steps.size} steps, ${path.totalDistance.toInt()}px total"
+                )
+
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "❌ Navigation failed: ${e.message}"
+                )
+            }
+        }
+    }
+
+    // Method to get detailed pathfinding diagnostics
+    fun getDiagnostics(): String {
+        val currentFloor = _uiState.value.currentFloor
+        val floorPlan = floorPlans[currentFloor]
+        val userNodes = _uiState.value.userNodes
+        val nodesOnFloor = userNodes.filter { it.position.floor == currentFloor }
+
+        val totalConnections = nodesOnFloor.sumOf { it.connections.size }
+        val connectedNodes = nodesOnFloor.count { it.connections.isNotEmpty() }
+        val isolatedNodes = nodesOnFloor.size - connectedNodes
+
+        return """
+        🔍 PATHFINDING DIAGNOSTICS - Floor $currentFloor
+        
+        📊 Node Statistics:
+        • Total nodes on floor: ${nodesOnFloor.size}
+        • Connected nodes: $connectedNodes
+        • Isolated nodes: $isolatedNodes
+        • Total connections: $totalConnections
+        • Average connections: ${if (nodesOnFloor.isNotEmpty()) "%.1f".format(totalConnections.toFloat() / nodesOnFloor.size) else "0"}
+        
+        🗺️ Floor Plan Info:
+        • Floor plan loaded: ${floorPlan != null}
+        • Walls defined: ${floorPlan?.walls?.size ?: 0}
+        • Rooms defined: ${floorPlan?.rooms?.size ?: 0}
+        
+        📱 Current State:
+        • Current position: ${_uiState.value.currentPosition?.let { "(${it.x.toInt()}, ${it.y.toInt()})" } ?: "None"}
+        • Selected POI: ${_uiState.value.selectedPOI?.name ?: "None"}
+        • Navigation active: ${_uiState.value.navigationPath != null}
+        
+        🔗 Connection Details:
+        ${
+            nodesOnFloor.joinToString("\n") { node ->
+                "• ${node.id.takeLast(8)}: (${node.position.x.toInt()}, ${node.position.y.toInt()}) → ${node.connections.size} connections"
+            }
+        }
+        """.trimIndent()
+    }
+
+    // Method to show diagnostics in UI
+    fun showDiagnostics() {
+        val diagnostics = getDiagnostics()
+        _uiState.value = _uiState.value.copy(errorMessage = diagnostics)
     }
 }

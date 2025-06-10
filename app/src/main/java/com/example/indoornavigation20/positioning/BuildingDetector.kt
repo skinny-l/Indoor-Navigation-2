@@ -154,6 +154,14 @@ class BuildingDetector(private val context: Context) {
     fun setTestingMode(isInside: Boolean, reason: String = "Manual testing") {
         _isInsideBuilding.value = isInside
         _detectionMethod.value = reason
+        println("🧪 Building detector: User manually set to ${if (isInside) "INSIDE" else "OUTSIDE"} - $reason")
+    }
+
+    /**
+     * Get current building status for debugging
+     */
+    fun getCurrentStatus(): Pair<Boolean, String> {
+        return Pair(_isInsideBuilding.value, _detectionMethod.value)
     }
 }
 

@@ -98,6 +98,30 @@ fun MapScreen(
                     }) {
                         Icon(Icons.Default.Link, contentDescription = "Connect All Nodes")
                     }
+
+                    // Enhanced pathfinding test controls
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        IconButton(onClick = {
+                            viewModel.connectAllNodesEnhanced()
+                        }) {
+                            Icon(Icons.Default.AutoFixHigh, contentDescription = "Enhanced Connect")
+                        }
+
+                        IconButton(onClick = {
+                            viewModel.rebuildConnectionNetwork()
+                        }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Rebuild Network")
+                        }
+
+                        IconButton(onClick = {
+                            viewModel.showDiagnostics()
+                        }) {
+                            Icon(Icons.Default.Analytics, contentDescription = "Show Diagnostics")
+                        }
+                    }
+
                     IconButton(onClick = onNavigateToPositioning) {
                         Icon(Icons.Default.LocationOn, contentDescription = "Positioning")
                     }
@@ -310,6 +334,16 @@ fun MapScreen(
                         }
                     }
                 } else {
+                    // Add Status Cards to show building status and other info
+                    StatusCards(
+                        currentPosition = uiState.currentPosition,
+                        selectedPOI = uiState.selectedPOI,
+                        signalStrength = uiState.signalStrength,
+                        isInsideBuilding = viewModel.isUserInsideBuilding(),
+                        detectionMethod = viewModel.getBuildingDetectionMethod(),
+                        selectedEntrance = viewModel.getSelectedEntranceForTesting()
+                    )
+
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -460,6 +494,9 @@ private fun TestingControlsOverlay(
     viewModel: MapViewModel,
     onDismiss: () -> Unit
 ) {
+    val isInside = viewModel.isUserInsideBuilding()
+    val detectionMethod = viewModel.getBuildingDetectionMethod()
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -485,9 +522,59 @@ private fun TestingControlsOverlay(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Building Status Display
+            Text(
+                text = "Current Building Status",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isInside)
+                        MaterialTheme.colorScheme.primaryContainer
+                    else
+                        MaterialTheme.colorScheme.secondaryContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = if (isInside) "INSIDE BUILDING" else "OUTSIDE BUILDING",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Detection Method: $detectionMethod",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Icon(
+                        imageVector = if (isInside) Icons.Default.Home else Icons.Default.OutdoorGrill,
+                        contentDescription = if (isInside) "Inside Building" else "Outside Building",
+                        modifier = Modifier.size(48.dp),
+                        tint = if (isInside) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // Building Status Controls
             Text(
-                text = "Building Status",
+                text = "Change Building Status",
                 style = MaterialTheme.typography.titleMedium
             )
 

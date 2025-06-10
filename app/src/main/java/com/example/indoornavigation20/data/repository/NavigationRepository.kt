@@ -71,6 +71,46 @@ class NavigationRepository {
         loadPOIsFromFirestore()
     }
 
+    // Add method to force reload all data with debug info
+    suspend fun forceReloadAllData(): String {
+        return try {
+            println("🔄 FORCE RELOAD - Starting...")
+
+            // Clear current data
+            userNodes.clear()
+            editablePOIs.clear()
+
+            // Force reload from Firebase
+            loadNodesFromFirestore()
+            loadPOIsFromFirestore()
+
+            // Wait a bit for Firebase, respond
+            kotlinx.coroutines.delay(2000)
+
+            val nodeCount = userNodes.size
+            val poiCount = editablePOIs.size
+            val userId = auth.currentUser?.uid ?: "guest_user"
+
+            """
+            🔄 FORCE RELOAD COMPLETE
+            
+            User ID: $userId
+            Nodes loaded: $nodeCount
+            POIs loaded: $poiCount
+            
+            Firebase paths checked:
+            📁 nodes/$userId/user_nodes/ 
+            📁 pois/$userId/user_pois/
+            
+            ${if (nodeCount == 0) "❌ NO NODES FOUND! Your nodes may be stored under a different user ids or deleted." else "✅ Nodes found and loaded"}
+            ${if (poiCount == 0) "⚠️ No POIs found" else "✅ POIs found and loaded"}
+            """.trimIndent()
+
+        } catch (e: Exception) {
+            "❌ Force reload failed: ${e.message}"
+        }
+    }
+
     // Load POIs from Firestore
     private fun loadPOIsFromFirestore() {
         val userId = auth.currentUser?.uid ?: "guest_user"
@@ -142,6 +182,8 @@ class NavigationRepository {
     private fun loadNodesFromFirestore() {
         val userId = auth.currentUser?.uid ?: "guest_user"
 
+        println("🔄 Loading nodes from Firebase for user: $userId")
+
         // Load nodes from the current user's collection
         firestore.collection("nodes")
             .document(userId)
@@ -156,6 +198,7 @@ class NavigationRepository {
                 }
 
                 if (snapshot != null) {
+                    val previousCount = userNodes.size
                     userNodes.clear()
                     android.util.Log.d(
                         "NavigationRepository",
@@ -187,20 +230,31 @@ class NavigationRepository {
                             userNodes.add(node)
                             android.util.Log.d(
                                 "NavigationRepository",
-                                "Loaded navigation node: ${node.id} at (${node.position.x}, ${node.position.y})"
+                                "✅ Loaded node: ${node.id} at (${node.position.x}, ${node.position.y}) with ${node.connections.size} connections"
                             )
                         } catch (e: Exception) {
                             android.util.Log.e(
                                 "NavigationRepository",
-                                "Error parsing node document ${document.id}: ${e.message}"
+                                "❌ Error parsing node document ${document.id}: ${e.message}"
                             )
                         }
                     }
 
                     android.util.Log.d(
                         "NavigationRepository",
-                        "Total navigation nodes loaded: ${userNodes.size}"
+                        "📊 Total navigation nodes loaded: ${userNodes.size} (was: $previousCount)"
                     )
+
+                    if (userNodes.isNotEmpty()) {
+                        println("🎯 Available nodes:")
+                        userNodes.forEach { node ->
+                            println("   - ${node.id}: (${node.position.x}, ${node.position.y}) connections: ${node.connections}")
+                        }
+                    } else {
+                        println("⚠️ NO NODES FOUND in Firebase! Path: nodes/$userId/user_nodes/")
+                    }
+                } else {
+                    println("❌ Firebase snapshot is null")
                 }
             }
     }
@@ -425,7 +479,7 @@ class NavigationRepository {
         userNodes.add(newNode)
 
         // Auto-connect to nearby nodes
-        val updatedNode = autoConnectNode(newNode)
+        val updatedNode = autoconnectNodeLegacy(newNode)
         val index = userNodes.indexOf(newNode)
         userNodes[index] = updatedNode
 
@@ -500,8 +554,228 @@ class NavigationRepository {
         }
     }
 
+    // Enhanced auto-connect nodes within reasonable distance
+    private suspend fun autoconnectNode(newNode: NavNode): NavNode {
+        val connectionDistance = 180f // Sweet spot - not too long, not too short
+        val nearbyNodes = userNodes.filter { existingNode ->
+            existingNode.id != newNode.id &&
+                    distance(newNode.position, existingNode.position) <= connectionDistance &&
+                    existingNode.isWalkable &&
+                    existingNode.type != NodeType.OBSTACLE
+        }
+
+        val connections = nearbyNodes.map { it.id }.toMutableList()
+
+        println("🔗 Auto-connecting node ${newNode.id} to ${connections.size} nearby nodes")
+
+        // Update nearby nodes to connect back to this new node (bidirectional connections)
+        nearbyNodes.forEach { nearbyNode ->
+            if (!nearbyNode.connections.contains(newNode.id)) {
+                val updatedConnections = nearbyNode.connections + newNode.id
+                val updatedNearbyNode = nearbyNode.copy(connections = updatedConnections)
+                val nearbyIndex = userNodes.indexOf(nearbyNode)
+                if (nearbyIndex >= 0) {
+                    userNodes[nearbyIndex] = updatedNearbyNode
+
+                    // Save updated nearby node to Firestore asynchronously
+                    try {
+                        saveNodeToFirestore(updatedNearbyNode)
+                        println("✅ Updated connections for node ${nearbyNode.id}")
+                    } catch (e: Exception) {
+                        println("❌ Failed to update connections for node ${nearbyNode.id}: ${e.message}")
+                    }
+                }
+            }
+        }
+
+        return newNode.copy(connections = connections)
+    }
+
+    // Improved method to connect all existing nodes retroactively
+    suspend fun connectAllNodesImproved(): String {
+        val connectionDistance = 180f // Sweet spot - balanced connectivity
+        var connectionsAdded = 0
+        var nodesProcessed = 0
+
+        return try {
+            println("🔗 Starting improved node connection process for ${userNodes.size} nodes...")
+
+            // Create a copy to work with to avoid concurrent,
+            val nodesToProcess = userNodes.toList()
+
+            nodesToProcess.forEach { node ->
+                nodesProcessed++
+                println("🔗 Processing node $nodesProcessed/${nodesToProcess.size}: ${node.id}")
+
+                val nearbyNodes = nodesToProcess.filter { otherNode ->
+                    otherNode.id != node.id &&
+                            distance(node.position, otherNode.position) <= connectionDistance &&
+                            otherNode.isWalkable &&
+                            otherNode.type != NodeType.OBSTACLE
+                }
+
+                val existingConnections = node.connections.toSet()
+                val newConnections = nearbyNodes.map { it.id }.filter {
+                    !existingConnections.contains(it)
+                }
+
+                if (newConnections.isNotEmpty()) {
+                    val updatedNode = node.copy(connections = node.connections + newConnections)
+
+                    // Update in memory
+                    val nodeIndex = userNodes.indexOfFirst { it.id == node.id }
+                    if (nodeIndex >= 0) {
+                        userNodes[nodeIndex] = updatedNode
+                    }
+
+                    // Save to Firestore
+                    try {
+                        saveNodeToFirestore(updatedNode)
+                        connectionsAdded += newConnections.size
+                        println("✅ Added ${newConnections.size} connections to node ${node.id}")
+                    } catch (e: Exception) {
+                        println("❌ Failed to save node ${node.id}: ${e.message}")
+                    }
+                }
+            }
+
+            """
+            🔗 NODE CONNECTION COMPLETED ✅
+            
+            📊 Results:
+            • Nodes processed: $nodesProcessed
+            • New connections added: $connectionsAdded
+            • Connection distance: ${connectionDistance}px
+            
+            📋 Current Network Status:
+            ${getNetworkStatus()}
+            """.trimIndent()
+
+        } catch (e: Exception) {
+            """
+            ❌ NODE CONNECTION FAILED
+            
+            Error: ${e.message}
+            Nodes processed: $nodesProcessed
+            Connections added before failure: $connectionsAdded
+            """.trimIndent()
+        }
+    }
+
+    // Helper method to get network status
+    private fun getNetworkStatus(): String {
+        val totalNodes = userNodes.size
+        val totalConnections = userNodes.sumOf { it.connections.size }
+        val connectedNodes = userNodes.count { it.connections.isNotEmpty() }
+        val isolatedNodes = totalNodes - connectedNodes
+
+        return """
+        • Total nodes: $totalNodes
+        • Connected nodes: $connectedNodes
+        • Isolated nodes: $isolatedNodes
+        • Total connections: $totalConnections
+        • Average connections per node: ${if (totalNodes > 0) "%.1f".format(totalConnections.toFloat() / totalNodes) else "0"}
+        """.trimIndent()
+    }
+
+    // Method to validate and fix node connections
+    suspend fun validateAndFixConnections(): String {
+        println("🔍 Validating node connections...")
+
+        var fixedConnections = 0
+        val validatedNodes = mutableListOf<NavNode>()
+
+        userNodes.forEach { node ->
+            val validConnections = node.connections.filter { connectionId ->
+                userNodes.any { it.id == connectionId }
+            }
+
+            if (validConnections.size != node.connections.size) {
+                val removedCount = node.connections.size - validConnections.size
+                println("🔧 Fixed $removedCount invalid connections for node ${node.id}")
+                fixedConnections += removedCount
+
+                val fixedNode = node.copy(connections = validConnections)
+                validatedNodes.add(fixedNode)
+
+                // Save fixed node
+                try {
+                    saveNodeToFirestore(fixedNode)
+                } catch (e: Exception) {
+                    println("❌ Failed to save fixed node ${node.id}: ${e.message}")
+                }
+            } else {
+                validatedNodes.add(node)
+            }
+        }
+
+        // Update in-memory list
+        userNodes.clear()
+        userNodes.addAll(validatedNodes)
+
+        return """
+        🔍 CONNECTION VALIDATION COMPLETED
+        
+        • Invalid connections fixed: $fixedConnections
+        • All connections are now valid
+        
+        ${getNetworkStatus()}
+        """.trimIndent()
+    }
+
+    // Enhanced method to add new node with better auto-connections
+    suspend fun addNodeWithSmartConnection(x: Float, y: Float): NavNode {
+        val newNode = NavNode(
+            id = "node_${System.currentTimeMillis()}",
+            position = Position(x, y, 1),
+            connections = emptyList(),
+            isWalkable = true,
+            type = NodeType.WALKWAY,
+            isUserCreated = true
+        )
+
+        // Add to memory first
+        userNodes.add(newNode)
+
+        // Then auto-connect with improved logic
+        val connectedNode = autoconnectNode(newNode)
+        val index = userNodes.indexOf(newNode)
+        userNodes[index] = connectedNode
+
+        // Save to Firestore
+        try {
+            saveNodeToFirestore(connectedNode)
+            println("✅ Added and connected new node: ${connectedNode.id}")
+        } catch (e: Exception) {
+            println("❌ Failed to save new node: ${e.message}")
+            // Remove from memory if save failed
+            userNodes.removeIf { it.id == newNode.id }
+            throw e
+        }
+
+        return connectedNode
+    }
+
+    // Method to rebuild entire connection network from scratch
+    suspend fun rebuildConnectionNetwork(): String {
+        return try {
+            println("🔄 Rebuilding entire connection network...")
+
+            // Reset all connections
+            val nodesWithoutConnections = userNodes.map { it.copy(connections = emptyList()) }
+            userNodes.clear()
+            userNodes.addAll(nodesWithoutConnections)
+
+            // Rebuild connections using improved algorithm
+            connectAllNodesImproved()
+
+        } catch (e: Exception) {
+            "❌ Failed to rebuild network: ${e.message}"
+        }
+    }
+
     // Auto-connect nodes within reasonable distance
-    private fun autoConnectNode(newNode: NavNode): NavNode {
+    private fun autoconnectNodeLegacy(newNode: NavNode): NavNode {
         val connectionDistance = 150f // Maximum connection distance in pixels
         val nearbyNodes = userNodes.filter { existingNode ->
             existingNode.id != newNode.id &&
@@ -574,7 +848,7 @@ class NavigationRepository {
             svgUrl = "android.resource://com.example.indoornavigation20/drawable/plain_svg",
             width = 1165.1f, // Use actual SVG viewBox width
             height = 760.8f, // Use actual SVG viewBox height
-            nodes = userNodes.filter { it.position.floor == 1 }, // Use user-created nodes
+            nodes = userNodes.filter { it.position.floor == 1 },// Use user-created nodes
             rooms = createCSBuildingRooms(),
             walls = createCSBuildingWalls(),
             coordinateSystem = coordinateSystem
@@ -642,7 +916,7 @@ class NavigationRepository {
                 features = listOf("Theater Seating", "Projector", "Audio System", "Stage")
             ),
 
-            // Administrative Offices
+            // administrative offices
             Room(
                 id = "pejabot_akademik",
                 name = "Pejabot Pengurusan Akademik",
@@ -710,7 +984,7 @@ class NavigationRepository {
             // Toilets
             Room(
                 id = "tandas_l",
-                name = "Tandas (L)",
+                name = "Tandas OLA",
                 type = RoomType.RESTROOM,
                 bounds = RoomBounds(
                     topLeft = Position(401.1f, 320f, 1),
@@ -720,7 +994,7 @@ class NavigationRepository {
             ),
             Room(
                 id = "tandas_p",
-                name = "Tandas (P)",
+                name = "Tandas OPA",
                 type = RoomType.RESTROOM,
                 bounds = RoomBounds(
                     topLeft = Position(401.1f, 390f, 1),
@@ -830,7 +1104,7 @@ class NavigationRepository {
     }
 
     private fun createCSBuildingNavigationNodes(): List<NavNode> {
-        return emptyList() // Remove all hardcoded nodes - user will place their own
+        return emptyList()// Remove all hardcoded nodes - user will place their own
     }
 
     suspend fun searchPOIs(query: String): Flow<Result<List<PointOfInterest>>> = flow {
@@ -929,6 +1203,6 @@ class NavigationRepository {
     }
 
     private fun getDefaultPOIs(): List<PointOfInterest> {
-        return emptyList() // Only show user-added POIs
+        return emptyList()// Only show user-added POIs
     }
 }

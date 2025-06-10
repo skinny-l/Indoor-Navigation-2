@@ -93,7 +93,7 @@ class PathfindingEngine {
     }
 
     private fun lineIntersectsWall(start: Position, end: Position, wall: Wall): Boolean {
-        // Check if line segment from start to end intersects with the wall
+        // Enhanced wall intersection with buffer zone
         val x1 = start.x
         val y1 = start.y
         val x2 = end.x
@@ -110,7 +110,9 @@ class PathfindingEngine {
         val t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denominator
         val u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denominator
 
-        return t >= 0 && t <= 1 && u >= 0 && u <= 1
+        // Add buffer zone around walls to prevent cutting through
+        val wallBuffer = 0.1f
+        return t >= -wallBuffer && t <= 1 + wallBuffer && u >= -wallBuffer && u <= 1 + wallBuffer
     }
 
     private fun findPathWithBasicObstacleAvoidance(
@@ -288,88 +290,121 @@ class PathfindingEngine {
         finalPathPoints.add(start)
         println("  ➡️ Path: Added raw start (${start.x}, ${start.y})")
 
-        // Add path to first node if walkable
-        val firstNodePos = nodePath.first().position
-        if (start.x != firstNodePos.x || start.y != firstNodePos.y) {
-            if (isPathWalkable(start, firstNodePos, walls)) {
-                finalPathPoints.add(firstNodePos)
-                println("  ➡️ Path: Added first A* node (${firstNodePos.x}, ${firstNodePos.y})")
-            } else {
-                println("  ⚠️ Path to first node blocked, finding alternative")
-                val alternativePath = findPathWithBasicObstacleAvoidance(start, firstNodePos, walls)
-                finalPathPoints.addAll(alternativePath.drop(1)) // Skip start position
-            }
-        }
-
-        // Add all node positions from the A* path, ensuring each segment is walkable
-        for (i in 1 until nodePath.size) {
-            val currentNodePos = nodePath[i].position
+        // FORCE path through ALL nodes in sequence - no shortcuts allowed
+        for (i in nodePath.indices) {
+            val nodePos = nodePath[i].position
             val lastPos = finalPathPoints.last()
 
-            if (isPathWalkable(lastPos, currentNodePos, walls)) {
-                finalPathPoints.add(currentNodePos)
-                println("  ➡️ Path: Added A* node ${nodePath[i].id} (${currentNodePos.x}, ${currentNodePos.y})")
-            } else {
-                println("  ⚠️ Path segment blocked, attempting detour")
-                // Try to find alternative path to this node
-                val detourPath = findPathWithBasicObstacleAvoidance(lastPos, currentNodePos, walls)
-                finalPathPoints.addAll(detourPath.drop(1)) // Skip the starting position
+            // Always add the node position - even if it creates longer paths
+            if (lastPos != nodePos) {
+                // Check if direct path is walkable
+                if (isPathWalkable(lastPos, nodePos, walls)) {
+                    finalPathPoints.add(nodePos)
+                    println("  ➡️ Path: Added node ${nodePath[i].id.takeLast(4)} (${nodePos.x.toInt()}, ${nodePos.y.toInt()})")
+                } else {
+                    // Path blocked by wall - add detour points
+                    println("  🚧 Wall blocking path to node ${nodePath[i].id.takeLast(4)} - adding detour")
+                    val detourPath = findCorridorDetour(lastPos, nodePos, walls)
+                    finalPathPoints.addAll(detourPath.drop(1)) // Skip first point as it's already added
+                    println("  ➡️ Path: Added ${detourPath.size - 1} detour points")
+                }
             }
         }
 
-        // Add path to final goal if walkable
-        val lastNodePos = finalPathPoints.last()
-        if (lastNodePos.x != goal.x || lastNodePos.y != goal.y) {
-            if (isPathWalkable(lastNodePos, goal, walls)) {
+        // Add path to final goal
+        val lastPos = finalPathPoints.last()
+        if (lastPos != goal) {
+            if (isPathWalkable(lastPos, goal, walls)) {
                 finalPathPoints.add(goal)
-                println("  ➡️ Path: Added raw goal (${goal.x}, ${goal.y})")
+                println("  ➡️ Path: Added final goal (${goal.x}, ${goal.y})")
             } else {
-                println("  ⚠️ Path to goal blocked, finding alternative")
-                val finalPath = findPathWithBasicObstacleAvoidance(lastNodePos, goal, walls)
-                finalPathPoints.addAll(finalPath.drop(1)) // Skip starting position
+                println("  🚧 Wall blocking path to goal - adding detour")
+                val finalDetour = findCorridorDetour(lastPos, goal, walls)
+                finalPathPoints.addAll(finalDetour.drop(1))
             }
         }
 
-        println("  ➡️ Path: Final walkable points: ${finalPathPoints.map { "(${it.x},${it.y})" }}")
-        return simplifyWalkablePath(finalPathPoints, walls)
+        println("  ➡️ Path: Final corridor points: ${finalPathPoints.size} total")
+        return finalPathPoints
     }
 
-    private fun simplifyWalkablePath(path: List<Position>, walls: List<Wall>): List<Position> {
-        if (path.size < 3) return path
+    // New method to find corridor-friendly detours
+    private fun findCorridorDetour(
+        start: Position,
+        goal: Position,
+        walls: List<Wall>
+    ): List<Position> {
+        // Try multiple L-shaped paths with intermediate points for better wall avoidance
+        val detourOptions = listOf(
+            // Horizontal then vertical
+            listOf(start, Position(goal.x, start.y, start.floor), goal),
+            // Vertical then horizontal  
+            listOf(start, Position(start.x, goal.y, start.floor), goal),
+            // With intermediate points for complex layouts
+            listOf(
+                start,
+                Position(start.x + (goal.x - start.x) * 0.5f, start.y, start.floor),
+                Position(goal.x, start.y, start.floor),
+                goal
+            ),
+            listOf(
+                start,
+                Position(start.x, start.y + (goal.y - start.y) * 0.5f, start.floor),
+                Position(start.x, goal.y, start.floor),
+                goal
+            )
+        )
 
-        val simplifiedPath = mutableListOf<Position>()
-        simplifiedPath.add(path.first())
-
-        var i = 0
-        while (i < path.size - 1) {
-            var farthestReachable = i + 1
-
-            // Find the farthest point we can reach directly without hitting walls
-            for (j in i + 2 until path.size) {
-                if (isPathWalkable(path[i], path[j], walls)) {
-                    farthestReachable = j
-                } else {
+        for (detour in detourOptions) {
+            var pathClear = true
+            for (i in 0 until detour.size - 1) {
+                if (!isPathWalkable(detour[i], detour[i + 1], walls)) {
+                    pathClear = false
                     break
                 }
             }
-
-            // Add the farthest reachable point
-            if (farthestReachable > i + 1) {
-                simplifiedPath.add(path[farthestReachable])
-                i = farthestReachable
-            } else {
-                simplifiedPath.add(path[i + 1])
-                i++
+            if (pathClear) {
+                println("    🔄 Found corridor detour with ${detour.size} points")
+                return detour
             }
         }
 
-        // Ensure we have the final destination
-        if (simplifiedPath.last() != path.last()) {
-            simplifiedPath.add(path.last())
+        // If all detours fail, try a more complex multi-segment path
+        println("    ⚠️ Complex detour needed - trying multi-segment path")
+        return findComplexDetour(start, goal, walls)
+    }
+
+    // Advanced detour for complex wall layouts
+    private fun findComplexDetour(
+        start: Position,
+        goal: Position,
+        walls: List<Wall>
+    ): List<Position> {
+        // Try a grid-based approach with multiple waypoints
+        val steps = 4 // Number of intermediate steps
+        val detourPoints = mutableListOf<Position>()
+        detourPoints.add(start)
+
+        // Add intermediate waypoints in a staircase pattern
+        for (i in 1..steps) {
+            val progress = i.toFloat() / steps
+            val midX = start.x + (goal.x - start.x) * progress
+            val midY = start.y + (goal.y - start.y) * progress
+
+            // Try horizontal then vertical movement
+            val horizontalPoint = Position(midX, start.y, start.floor)
+            val verticalPoint = Position(midX, midY, start.floor)
+
+            if (isPathWalkable(detourPoints.last(), horizontalPoint, walls)) {
+                detourPoints.add(horizontalPoint)
+                if (isPathWalkable(horizontalPoint, verticalPoint, walls)) {
+                    detourPoints.add(verticalPoint)
+                }
+            }
         }
 
-        println("  ➡️ Path: Simplified walkable path: ${simplifiedPath.map { "(${it.x},${it.y})" }}")
-        return simplifiedPath
+        detourPoints.add(goal)
+        return detourPoints
     }
 
     private fun findMultiFloorPath(

@@ -36,6 +36,9 @@ class PositioningEngine(private val context: Context? = null) {
     private var wifiService: WiFiPositioningService? = null
     private var useRealServices = false
 
+    // Reference to building detector for integration
+    private var buildingDetector: BuildingDetector? = null
+
     init {
         context?.let {
             hybridBLEService = HybridPositioningService(it)
@@ -97,7 +100,8 @@ class PositioningEngine(private val context: Context? = null) {
         if (blePosition != null &&
             status == PositioningStatus.POSITIONED &&
             knownBeaconsUsedCount > 0 && // THIS IS THE NEW CRITICAL CHECK
-            isValidIndoorPosition(blePosition)
+            isValidIndoorPosition(blePosition) &&
+            (buildingDetector?.isInsideBuilding?.value != false)
         ) {
 
             _currentPosition.value = blePosition
@@ -111,9 +115,14 @@ class PositioningEngine(private val context: Context? = null) {
     }
 
     private fun isValidIndoorPosition(position: Position): Boolean {
-        // Only show position if we have high confidence (accuracy <= 5m)
+        // Only show position if we have high confidence (accuracy <= 3m and good beacon count)
         // This ensures we're likely inside the building with good beacon coverage
-        return position.accuracy <= 5.0f
+        val knownBeaconsUsedCount = _beaconsUsedInLastPositioningInternal.value.count {
+            hybridBLEService?.isBeaconKnown(it.beacon.macAddress) == true
+        }
+
+        // Stricter requirements: need good accuracy AND multiple known beacons
+        return position.accuracy <= 3.0f && knownBeaconsUsedCount >= 2
     }
 
     private fun updateSignalStrength(status: PositioningStatus) {
@@ -264,6 +273,14 @@ class PositioningEngine(private val context: Context? = null) {
 
     fun isBeaconKnown(beaconMacAddress: String): Boolean {
         return hybridBLEService?.isBeaconKnown(beaconMacAddress) ?: false
+    }
+
+    /**
+     * Set building detector for position validation
+     */
+    fun setBuildingDetector(detector: BuildingDetector) {
+        buildingDetector = detector
+        println("🔗 PositioningEngine: Building detector connected")
     }
 }
 
