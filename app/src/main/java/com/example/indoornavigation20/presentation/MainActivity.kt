@@ -18,14 +18,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.indoornavigation20.presentation.screens.*
-import com.example.indoornavigation20.presentation.theme.IndoorNavigation20Theme
+import com.example.indoornavigation20.presentation.theme.WherezitTheme
 import com.google.firebase.auth.FirebaseAuth
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            IndoorNavigation20Theme {
+            WherezitTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -142,6 +142,14 @@ fun NavigationApp() {
                 },
                 onNavigateToAdmin = {
                     navController.navigate("admin")
+                },
+                onLogout = {
+                    // Sign out from Firebase
+                    auth.signOut()
+                    // Navigate back to welcome screen and clear the back stack
+                    navController.navigate("welcome") {
+                        popUpTo("map") { inclusive = true }
+                    }
                 }
             )
         }
@@ -153,6 +161,14 @@ fun NavigationApp() {
                 },
                 onNavigateToDebug = {
                     navController.navigate("debug")
+                },
+                onLogout = {
+                    // Sign out from Firebase
+                    auth.signOut()
+                    // Navigate back to welcome screen and clear the back stack
+                    navController.navigate("welcome") {
+                        popUpTo("admin") { inclusive = true }
+                    }
                 }
             )
         }

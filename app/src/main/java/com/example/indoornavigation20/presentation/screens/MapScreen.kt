@@ -8,10 +8,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -31,20 +33,23 @@ import kotlinx.coroutines.launch
 fun MapScreen(
     onNavigateToPositioning: () -> Unit = {},
     onNavigateToBeacons: () -> Unit = {},
-    onNavigateToAdmin: () -> Unit = {}
+    onNavigateToAdmin: () -> Unit = {},
+    onLogout: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val viewModel: MapViewModel = remember { MapViewModel(context) }
     val uiState by viewModel.uiState.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     var showSearch by remember { mutableStateOf(false) }
-    var userPermissions by remember {
-        mutableStateOf<UserPermissions?>(
-            null
-        )
-    }
+    var isSearchFocused by remember { mutableStateOf(false) }
+    var userPermissions by remember { mutableStateOf<UserPermissions?>(null) }
     val coroutineScope = rememberCoroutineScope()
-    var showTestingControls by remember { mutableStateOf(false) }
+    
+    // Regular user actions (non-admin)
+    var showUserActions by remember { mutableStateOf(false) }
+    
+    // Admin-specific actions
+    var showAdminTools by remember { mutableStateOf(false) }
 
     // Load user permissions
     LaunchedEffect(Unit) {
@@ -58,109 +63,251 @@ fun MapScreen(
         android.util.Log.d("MapScreen", "User permissions: $userPermissions")
     }
 
+    // Load all POIs when search is opened to show in dropdown
+    LaunchedEffect(showSearch) {
+        if (showSearch) {
+            viewModel.searchPOIs("") // Load all POIs
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        text = uiState.building?.name ?: "Indoor Navigation",
+                        text = uiState.building?.name ?: "Wherezit",
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.headlineSmall.copy(
+                            fontWeight = FontWeight.Bold
+                        )
                     )
                 },
                 actions = {
-                    IconButton(onClick = { showSearch = !showSearch }) {
-                        Icon(Icons.Default.Search, contentDescription = "Search POI")
-                    }
+                    // Search button - always visible
                     IconButton(onClick = {
-                        // Refresh permissions
-                        coroutineScope.launch {
-                            userPermissions = viewModel.getUserPermissions()
+                        showSearch = !showSearch
+                        if (showSearch) {
+                            viewModel.searchPOIs("") // Load all POIs for dropdown
                         }
                     }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
-                    }
-                    IconButton(onClick = {
-                        // Reload POIs from Firestore
-                        viewModel.reloadPOIs()
-                    }) {
-                        Icon(Icons.Default.CloudSync, contentDescription = "Reload POIs")
-                    }
-                    IconButton(onClick = {
-                        // Reload nodes from Firestore
-                        viewModel.reloadNodes()
-                    }) {
-                        Icon(Icons.Default.AccountTree, contentDescription = "Reload Nodes")
-                    }
-                    IconButton(onClick = {
-                        // Connect all existing nodes
-                        viewModel.connectAllExistingNodes()
-                    }) {
-                        Icon(Icons.Default.Link, contentDescription = "Connect All Nodes")
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = "Search locations",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
                     }
 
-                    // Enhanced pathfinding test controls
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        IconButton(onClick = {
-                            viewModel.connectAllNodesEnhanced()
-                        }) {
-                            Icon(Icons.Default.AutoFixHigh, contentDescription = "Enhanced Connect")
+                    // Regular user menu (show for everyone including admins)
+                    Box {
+                        IconButton(onClick = { showUserActions = !showUserActions }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More options")
                         }
 
-                        IconButton(onClick = {
-                            viewModel.rebuildConnectionNetwork()
-                        }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Rebuild Network")
-                        }
+                        DropdownMenu(
+                            expanded = showUserActions,
+                            onDismissRequest = { showUserActions = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Refresh Data") },
+                                onClick = {
+                                    coroutineScope.launch {
+                                        viewModel.reloadPOIs()
+                                    }
+                                    showUserActions = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Refresh, null) }
+                            )
 
-                        IconButton(onClick = {
-                            viewModel.showDiagnostics()
-                        }) {
-                            Icon(Icons.Default.Analytics, contentDescription = "Show Diagnostics")
-                        }
-                    }
+                            DropdownMenuItem(
+                                text = { Text("My Location") },
+                                onClick = {
+                                    viewModel.centerOnCurrentLocations()
+                                    showUserActions = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.MyLocation, null) }
+                            )
 
-                    IconButton(onClick = onNavigateToPositioning) {
-                        Icon(Icons.Default.LocationOn, contentDescription = "Positioning")
-                    }
-                    IconButton(onClick = onNavigateToBeacons) {
-                        Icon(Icons.Default.Sensors, contentDescription = "Beacons")
-                    }
-                    IconButton(onClick = { showTestingControls = !showTestingControls }) {
-                        Icon(Icons.Default.BugReport, contentDescription = "Testing Controls")
-                    }
-                    if (userPermissions?.canAccessAdmin == true) {
-                        IconButton(onClick = onNavigateToAdmin) {
-                            Icon(
-                                Icons.Default.AdminPanelSettings,
-                                contentDescription = "Admin Panel"
+                            Divider()
+
+                            DropdownMenuItem(
+                                text = { Text("Logout") },
+                                onClick = {
+                                    onLogout()
+                                    showUserActions = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Logout, null) }
                             )
                         }
                     }
-                }
+
+                    // Admin menu - separate and comprehensive
+                    if (userPermissions?.canAccessAdmin == true) {
+                        Box {
+                            IconButton(onClick = { showAdminTools = !showAdminTools }) {
+                                Icon(
+                                    Icons.Default.AdminPanelSettings,
+                                    contentDescription = "Admin Tools",
+                                    tint = MaterialTheme.colorScheme.secondary
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = showAdminTools,
+                                onDismissRequest = { showAdminTools = false }
+                            ) {
+                                // Data Management
+                                Text(
+                                    text = "Data Management",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                )
+
+                                DropdownMenuItem(
+                                    text = { Text("Refresh All Data") },
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            viewModel.forceReloadAllData()
+                                        }
+                                        showAdminTools = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Refresh, null) }
+                                )
+
+                                Divider()
+
+                                // Network Tools
+                                Text(
+                                    text = "Network Tools",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                )
+
+                                DropdownMenuItem(
+                                    text = { Text("Connect All Nodes") },
+                                    onClick = {
+                                        viewModel.connectAllNodesEnhanced()
+                                        showAdminTools = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.AutoFixHigh, null) }
+                                )
+
+                                DropdownMenuItem(
+                                    text = { Text("Rebuild Network") },
+                                    onClick = {
+                                        viewModel.rebuildConnectionNetwork()
+                                        showAdminTools = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.NetworkCheck, null) }
+                                )
+
+                                Divider()
+
+                                // Diagnostics
+                                Text(
+                                    text = "Diagnostics",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                )
+
+                                DropdownMenuItem(
+                                    text = { Text("System Diagnostics") },
+                                    onClick = {
+                                        viewModel.showDiagnostics()
+                                        showAdminTools = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Analytics, null) }
+                                )
+
+                                DropdownMenuItem(
+                                    text = { Text("Node Storage Info") },
+                                    onClick = {
+                                        viewModel.showNodeStorageInfo()
+                                        showAdminTools = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Storage, null) }
+                                )
+
+                                Divider()
+
+                                DropdownMenuItem(
+                                    text = { Text("Advanced Admin") },
+                                    onClick = {
+                                        onNavigateToAdmin()
+                                        showAdminTools = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Settings, null) }
+                                )
+
+                                Divider()
+
+                                DropdownMenuItem(
+                                    text = { Text("Logout") },
+                                    onClick = {
+                                        onLogout()
+                                        showAdminTools = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Logout, null) }
+                                )
+                            }
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
                 NavigationBarItem(
                     selected = true,
                     onClick = { /* Already on map */ },
-                    icon = { Icon(Icons.Default.Place, contentDescription = "Map") },
-                    label = { Text("Map") }
+                    icon = {
+                        Icon(
+                            Icons.Default.Place,
+                            contentDescription = "Map",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    label = { Text("Navigate") },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
                 NavigationBarItem(
                     selected = false,
                     onClick = onNavigateToPositioning,
                     icon = { Icon(Icons.Default.MyLocation, contentDescription = "Position") },
-                    label = { Text("Position") }
+                    label = { Text("Position") },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
                 NavigationBarItem(
                     selected = false,
                     onClick = onNavigateToBeacons,
-                    icon = { Icon(Icons.Default.Sensors, contentDescription = "Beacons") },
-                    label = { Text("Beacons") }
+                    icon = { Icon(Icons.Default.Sensors, contentDescription = "Sensors") },
+                    label = { Text("Sensors") },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
                 if (userPermissions?.canAccessAdmin == true) {
                     NavigationBarItem(
@@ -172,7 +319,13 @@ fun MapScreen(
                                 contentDescription = "Admin"
                             )
                         },
-                        label = { Text("Admin") }
+                        label = { Text("Admin") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.secondary,
+                            selectedTextColor = MaterialTheme.colorScheme.secondary,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     )
                 }
             }
@@ -184,129 +337,206 @@ fun MapScreen(
                 .padding(paddingValues)
         ) {
             Column {
-                // Debug info card to show current user status
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (userPermissions?.canAccessAdmin == true)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else
-                            MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Text(
-                        text = if (userPermissions?.canAccessAdmin == true) {
-                            "👑 ADMIN MODE - Full Access"
-                        } else {
-                            "👤 USER MODE - View Only"
-                        },
-                        modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // Search Bar
+                // Enhanced Search Bar with immediate dropdown
                 if (showSearch) {
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp)
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f)
+                        ),
+                        shape = MaterialTheme.shapes.large
                     ) {
                         OutlinedTextField(
                             value = searchQuery,
                             onValueChange = {
                                 searchQuery = it
-                                viewModel.searchPOIs(it)
+                                if (it.isNotEmpty()) {
+                                    viewModel.searchPOIs(it)
+                                } else {
+                                    viewModel.searchPOIs("") // Show all POIs when empty
+                                }
                             },
-                            label = { Text("Search rooms, labs, offices...") },
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            placeholder = {
+                                Text("Find classrooms, labs, offices...")
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
                             trailingIcon = {
                                 if (searchQuery.isNotEmpty()) {
                                     IconButton(onClick = {
                                         searchQuery = ""
-                                        viewModel.searchPOIs("")
+                                        viewModel.searchPOIs("") // Show all POIs
                                     }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "Clear")
+                                        Icon(
+                                            Icons.Default.Clear,
+                                            contentDescription = "Clear search",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                } else {
+                                    IconButton(onClick = { showSearch = false }) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Close search",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
                                 }
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(16.dp)
+                                .padding(12.dp)
+                                .onFocusChanged { focusState ->
+                                    isSearchFocused = focusState.isFocused
+                                    if (focusState.isFocused && searchQuery.isEmpty()) {
+                                        viewModel.searchPOIs("") // Load all POIs when focused
+                                    }
+                                },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = Color.Transparent,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent
+                            ),
+                            shape = MaterialTheme.shapes.large,
+                            singleLine = true
                         )
                     }
                 }
 
-                // Floor selector
-                if (uiState.availableFloors.size > 1) {
-                    Card(
+                // Compact floor selector and status row
+                if (uiState.availableFloors.size > 1 || userPermissions?.canAccessAdmin == true) {
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Floor:",
-                                style = MaterialTheme.typography.labelMedium
-                            )
+                        // Floor selector chips
+                        if (uiState.availableFloors.size > 1) {
                             uiState.availableFloors.forEach { floor ->
                                 FilterChip(
                                     selected = floor == uiState.currentFloor,
                                     onClick = { viewModel.selectFloor(floor) },
-                                    label = { Text("$floor") }
+                                    label = {
+                                        Text(
+                                            text = "Floor $floor",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    },
+                                    modifier = Modifier.height(32.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        // Status indicators
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Signal strength indicator
+                            val signalColor = when (uiState.signalStrength) {
+                                SignalStrength.EXCELLENT, SignalStrength.GOOD -> MaterialTheme.colorScheme.primary
+                                SignalStrength.FAIR -> Color(0xFFFBBF24)
+                                else -> Color(0xFFEF4444)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(
+                                        color = signalColor,
+                                        shape = androidx.compose.foundation.shape.CircleShape
+                                    )
+                            )
+
+                            // Admin indicator
+                            if (userPermissions?.canAccessAdmin == true) {
+                                Icon(
+                                    Icons.Default.AdminPanelSettings,
+                                    contentDescription = "Admin",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.secondary
                                 )
                             }
                         }
                     }
                 }
 
-                // Search Results
-                if (showSearch && uiState.searchResults.isNotEmpty()) {
+                // Search Results Dropdown - Show immediately when search is open or when typing
+                if (showSearch && (uiState.searchResults.isNotEmpty() || isSearchFocused)) {
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp)
-                            .heightIn(max = 200.dp)
+                            .heightIn(max = 300.dp)
                     ) {
                         LazyColumn(
                             modifier = Modifier.padding(8.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            items(uiState.searchResults) { poi ->
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth(),
-                                    onClick = {
-                                        viewModel.selectPOI(poi)
-                                        showSearch = false
-                                    }
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(12.dp)
+                            if (uiState.searchResults.isEmpty() && searchQuery.isEmpty()) {
+                                item {
+                                    Text(
+                                        text = "Loading locations...",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(16.dp)
+                                    )
+                                }
+                            } else if (uiState.searchResults.isEmpty()) {
+                                item {
+                                    Text(
+                                        text = "No locations found for \"$searchQuery\"",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(16.dp)
+                                    )
+                                }
+                            } else {
+                                items(uiState.searchResults) { poi ->
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onClick = {
+                                            viewModel.selectPOI(poi)
+                                            showSearch = false
+                                            searchQuery = ""
+                                        }
                                     ) {
-                                        Text(
-                                            text = poi.name,
-                                            style = MaterialTheme.typography.titleSmall
-                                        )
-                                        Text(
-                                            text = poi.description,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Text(
-                                            text = "Floor ${poi.position.floor} • ${poi.category.name}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                        Column(
+                                            modifier = Modifier.padding(12.dp)
+                                        ) {
+                                            Text(
+                                                text = poi.name,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            Text(
+                                                text = poi.description,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                text = "Floor ${poi.position.floor} • ${poi.category.name}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -334,21 +564,11 @@ fun MapScreen(
                         }
                     }
                 } else {
-                    // Add Status Cards to show building status and other info
-                    StatusCards(
-                        currentPosition = uiState.currentPosition,
-                        selectedPOI = uiState.selectedPOI,
-                        signalStrength = uiState.signalStrength,
-                        isInsideBuilding = viewModel.isUserInsideBuilding(),
-                        detectionMethod = viewModel.getBuildingDetectionMethod(),
-                        selectedEntrance = viewModel.getSelectedEntranceForTesting()
-                    )
-
+                    // Main Floor Plan Area - CLEAN and PROMINENT
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .weight(1f)
-                            .padding(16.dp)
                     ) {
                         FloorPlanViewer(
                             floorPlan = uiState.currentFloorPlan,
@@ -363,306 +583,165 @@ fun MapScreen(
                             onNodeClick = { node -> viewModel.selectNode(node) },
                             onAddNode = { x, y -> viewModel.addNode(x, y) },
                             onMoveNode = { node, x, y ->
-                                viewModel.updateNodePosition(
-                                    node.id,
-                                    x,
-                                    y
-                                )
+                                viewModel.updateNodePosition(node.id, x, y)
                             },
                             isNodePlacementMode = uiState.isNodePlacementMode,
                             isAdminMode = userPermissions?.canAccessAdmin == true,
                             modifier = Modifier.fillMaxSize()
                         )
 
-                        // Signal strength indicator in top-right corner
-                        SignalStrengthIndicator(
-                            signalStrength = uiState.signalStrength,
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(8.dp)
-                        )
-
-                        // POI management controls for admin users  
-                        if (userPermissions?.canAccessAdmin == true && !uiState.isNodePlacementMode) {
-                            POIManagementControls(
-                                selectedPOI = uiState.selectedPOI,
-                                onDeletePOI = { poiId -> viewModel.deletePOI(poiId) },
+                        // MINIMAL bottom sheet for selected items - clean overlay
+                        if (uiState.selectedPOI != null || uiState.selectedNode != null) {
+                            Card(
                                 modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .padding(16.dp)
-                            )
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                                ),
+                                shape = MaterialTheme.shapes.large,
+                                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    uiState.selectedPOI?.let { poi ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = poi.name,
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    text = "${poi.category.name} • Floor ${poi.position.floor}",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            if (userPermissions?.canAccessAdmin == true) {
+                                                IconButton(onClick = { viewModel.deletePOI(poi.id) }) {
+                                                    Icon(
+                                                        Icons.Default.Delete,
+                                                        contentDescription = "Delete",
+                                                        tint = Color(0xFFEF4444)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    uiState.selectedNode?.let { node ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "Navigation Node",
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    text = "${node.type.name} • ${node.connections.size} connections",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            if (userPermissions?.canAccessAdmin == true) {
+                                                IconButton(onClick = { viewModel.deleteNode(node.id) }) {
+                                                    Icon(
+                                                        Icons.Default.Delete,
+                                                        contentDescription = "Delete",
+                                                        tint = Color(0xFFEF4444)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
-                        // Node placement controls for admin users
+                        // Single minimal admin FAB
                         if (userPermissions?.canAccessAdmin == true) {
-                            NodePlacementControls(
-                                isNodePlacementMode = uiState.isNodePlacementMode,
-                                selectedNode = uiState.selectedNode,
-                                onToggleNodePlacement = { viewModel.toggleNodePlacementMode() },
-                                onDeleteNode = { nodeId -> viewModel.deleteNode(nodeId) },
+                            FloatingActionButton(
+                                onClick = { viewModel.toggleNodePlacementMode() },
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
-                                    .padding(16.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Error message
-                uiState.errorMessage?.let { error ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer
-                        )
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = error,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { viewModel.clearError() }) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "Dismiss",
-                                    tint = MaterialTheme.colorScheme.onErrorContainer
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Building info
-                uiState.building?.let { building ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Text(
-                                text = "Building Information",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "${building.dimensions.width}m × ${building.dimensions.length}m",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = "Lat: ${building.coordinates.latitude}, Lng: ${building.coordinates.longitude}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (building.description.isNotEmpty()) {
-                                Text(
-                                    text = building.description,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Testing Controls Overlay
-            if (showTestingControls) {
-                TestingControlsOverlay(
-                    viewModel = viewModel,
-                    onDismiss = { showTestingControls = false }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun TestingControlsOverlay(
-    viewModel: MapViewModel,
-    onDismiss: () -> Unit
-) {
-    val isInside = viewModel.isUserInsideBuilding()
-    val detectionMethod = viewModel.getBuildingDetectionMethod()
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Testing Controls",
-                    style = MaterialTheme.typography.headlineSmall
-                )
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Close")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Building Status Display
-            Text(
-                text = "Current Building Status",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isInside)
-                        MaterialTheme.colorScheme.primaryContainer
-                    else
-                        MaterialTheme.colorScheme.secondaryContainer
-                )
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = if (isInside) "INSIDE BUILDING" else "OUTSIDE BUILDING",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Detection Method: $detectionMethod",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Icon(
-                        imageVector = if (isInside) Icons.Default.Home else Icons.Default.OutdoorGrill,
-                        contentDescription = if (isInside) "Inside Building" else "Outside Building",
-                        modifier = Modifier.size(48.dp),
-                        tint = if (isInside) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Building Status Controls
-            Text(
-                text = "Change Building Status",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                Button(
-                    onClick = { viewModel.setTestingInsideBuilding(false) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondary
-                    )
-                ) {
-                    Text("Set Outside")
-                }
-
-                Button(
-                    onClick = { viewModel.setTestingInsideBuilding(true) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Text("Set Inside")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Entrance Selection
-            Text(
-                text = "Select Entrance (for outside routing)",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            val availableEntrances = viewModel.getAvailableEntrances()
-            val selectedEntrance = viewModel.getSelectedEntranceForTesting()
-
-            if (availableEntrances.isNotEmpty()) {
-                LazyColumn(
-                    modifier = Modifier.heightIn(max = 200.dp)
-                ) {
-                    items(availableEntrances) { entrance ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 2.dp)
-                                .clickable { viewModel.selectEntrance(entrance) },
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (selectedEntrance?.id == entrance.id) {
-                                    MaterialTheme.colorScheme.primaryContainer
+                                    .padding(16.dp),
+                                containerColor = if (uiState.isNodePlacementMode) {
+                                    MaterialTheme.colorScheme.primary
                                 } else {
-                                    MaterialTheme.colorScheme.surface
+                                    MaterialTheme.colorScheme.secondary
                                 }
-                            )
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (selectedEntrance?.id == entrance.id) {
-                                    Icon(
-                                        Icons.Default.CheckCircle,
-                                        contentDescription = "Selected",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(end = 8.dp)
-                                    )
-                                }
-                                Column {
+                                Icon(
+                                    imageVector = if (uiState.isNodePlacementMode) Icons.Default.Done else Icons.Default.Edit,
+                                    contentDescription = if (uiState.isNodePlacementMode) "Done editing" else "Edit mode"
+                                )
+                            }
+                        }
+
+                        // Error message - overlay on top when present
+                        uiState.errorMessage?.let { error ->
+                            Card(
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (error.startsWith("✅") || error.startsWith("📍")) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else if (error.startsWith("❌")) {
+                                        MaterialTheme.colorScheme.errorContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant
+                                    }
+                                ),
+                                shape = MaterialTheme.shapes.large
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Text(
-                                        text = entrance.name,
-                                        style = MaterialTheme.typography.titleSmall
+                                        text = error,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (error.startsWith("✅") || error.startsWith("📍")) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else if (error.startsWith("❌")) {
+                                            MaterialTheme.colorScheme.onErrorContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        modifier = Modifier.weight(1f)
                                     )
-                                    Text(
-                                        text = "Position: (${entrance.position.x.toInt()}, ${entrance.position.y.toInt()})",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    IconButton(onClick = { viewModel.clearError() }) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Dismiss",
+                                            tint = if (error.startsWith("✅") || error.startsWith("📍")) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer
+                                            } else if (error.startsWith("❌")) {
+                                                MaterialTheme.colorScheme.onErrorContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            } else {
-                Text(
-                    text = "No entrance POIs found. Add some entrances first.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     }
@@ -771,326 +850,70 @@ fun SignalStrengthIndicator(
 ) {
     val (color, icon, description) = when (signalStrength) {
         SignalStrength.EXCELLENT -> Triple(
-            Color(0xFF4CAF50),
+            MaterialTheme.colorScheme.primary,
             Icons.Default.SignalWifi4Bar,
-            "Excellent signal"
+            "Excellent"
         )
 
         SignalStrength.GOOD -> Triple(
-            Color(0xFF8BC34A),
+            MaterialTheme.colorScheme.primary,
             Icons.Default.Wifi,
-            "Good signal"
+            "Good"
         )
 
         SignalStrength.FAIR -> Triple(
-            Color(0xFFFF9800),
+            Color(0xFFFBBF24), // Yellow from our theme
             Icons.Default.WifiTethering,
-            "Fair signal"
+            "Fair"
         )
 
         SignalStrength.POOR -> Triple(
-            Color(0xFFFF5722),
+            Color(0xFFEF4444), // Red from our theme
             Icons.Default.WifiTetheringOff,
-            "Poor signal"
+            "Poor"
         )
 
         SignalStrength.SEARCHING -> Triple(
-            Color(0xFF9E9E9E),
+            MaterialTheme.colorScheme.onSurfaceVariant,
             Icons.Default.WifiFind,
-            "Searching..."
+            "Searching"
         )
 
         SignalStrength.UNAVAILABLE -> Triple(
-            Color(0xFF757575),
+            MaterialTheme.colorScheme.onSurfaceVariant,
             Icons.Default.SignalWifiOff,
-            "No signal"
+            "No Signal"
         )
     }
 
-    Row(
-        modifier = modifier
-            .background(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                shape = MaterialTheme.shapes.small
-            )
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = description,
-            tint = color,
-            modifier = Modifier.size(16.dp)
-        )
-        Text(
-            text = when (signalStrength) {
-                SignalStrength.EXCELLENT -> "Excellent"
-                SignalStrength.GOOD -> "Good"
-                SignalStrength.FAIR -> "Fair"
-                SignalStrength.POOR -> "Poor"
-                SignalStrength.SEARCHING -> "Searching"
-                SignalStrength.UNAVAILABLE -> "No Signal"
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = color
-        )
-    }
-}
-
-@Composable
-private fun NodePlacementControls(
-    isNodePlacementMode: Boolean,
-    selectedNode: com.example.indoornavigation20.domain.model.NavNode?,
-    onToggleNodePlacement: () -> Unit,
-    onDeleteNode: (String) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var showDeleteConfirmation by remember { mutableStateOf(false) }
-
-    Column(
+    // More compact design with just icon and color indicator
+    Card(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+        ),
+        shape = MaterialTheme.shapes.large
     ) {
-        // Mode indicator card
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = if (isNodePlacementMode) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.secondaryContainer
-                }
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            // Color dot indicator
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(
+                        color = color,
+                        shape = androidx.compose.foundation.shape.CircleShape
+                    )
             )
-        ) {
-            Row(
-                modifier = Modifier.padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = if (isNodePlacementMode) Icons.Default.Edit else Icons.Default.Visibility,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(
-                    text = if (isNodePlacementMode) "Node Edit Mode" else "View Mode",
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-        }
 
-        // Toggle node placement mode
-        FloatingActionButton(
-            onClick = onToggleNodePlacement,
-            containerColor = if (isNodePlacementMode) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.secondary
-            }
-        ) {
             Icon(
-                imageVector = if (isNodePlacementMode) Icons.Default.Done else Icons.Default.Edit,
-                contentDescription = if (isNodePlacementMode) "Exit node placement" else "Edit nodes"
-            )
-        }
-
-        // Delete selected node button with confirmation
-        selectedNode?.let { node ->
-            FloatingActionButton(
-                onClick = { showDeleteConfirmation = true },
-                containerColor = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(48.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete selected node",
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
-
-        // Node placement instructions
-        if (isNodePlacementMode) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp)
-                ) {
-                    Text(
-                        text = "✨ Node Editing Active",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "• Tap to place new nodes\n• Drag to move nodes\n• Tap node to select",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-        }
-
-        // Selected node info
-        selectedNode?.let { node ->
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp)
-                ) {
-                    Text(
-                        text = "Selected Node",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Text(
-                        text = "ID: ${node.id.takeLast(6)}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = "Type: ${node.type.name}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = "Position: (${node.position.x.toInt()}, ${node.position.y.toInt()})",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = "Connections: ${node.connections.size}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-        }
-    }
-
-    // Delete confirmation dialog
-    if (showDeleteConfirmation && selectedNode != null) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirmation = false },
-            title = { Text("Delete Navigation Node") },
-            text = {
-                Text(
-                    "Are you sure you want to delete this navigation node?\n\nID: ${
-                        selectedNode.id.takeLast(
-                            8
-                        )
-                    }\nPosition: (${selectedNode.position.x.toInt()}, ${selectedNode.position.y.toInt()})\n\nThis action cannot be undone."
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDeleteNode(selectedNode.id)
-                        showDeleteConfirmation = false
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirmation = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-}
-
-@Composable
-private fun POIManagementControls(
-    selectedPOI: PointOfInterest?,
-    onDeletePOI: (String) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var showDeleteConfirmation by remember { mutableStateOf(false) }
-
-    selectedPOI?.let { poi ->
-        Column(
-            modifier = modifier,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Selected POI info card
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp)
-                ) {
-                    Text(
-                        text = "Selected POI",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Text(
-                        text = poi.name,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Category: ${poi.category.name}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = "Position: (${poi.position.x.toInt()}, ${poi.position.y.toInt()})",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = "Floor: ${poi.position.floor}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-
-            // Delete POI button
-            FloatingActionButton(
-                onClick = { showDeleteConfirmation = true },
-                containerColor = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(48.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete selected POI",
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
-
-        // Delete confirmation dialog
-        if (showDeleteConfirmation) {
-            AlertDialog(
-                onDismissRequest = { showDeleteConfirmation = false },
-                title = { Text("Delete Point of Interest") },
-                text = {
-                    Text("Are you sure you want to delete \"${poi.name}\"?\n\nCategory: ${poi.category.name}\nPosition: (${poi.position.x.toInt()}, ${poi.position.y.toInt()})\n\nThis action cannot be undone.")
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            onDeletePOI(poi.id)
-                            showDeleteConfirmation = false
-                        },
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Text("Delete")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDeleteConfirmation = false }) {
-                        Text("Cancel")
-                    }
-                }
+                imageVector = icon,
+                contentDescription = description,
+                tint = color,
+                modifier = Modifier.size(18.dp)
             )
         }
     }

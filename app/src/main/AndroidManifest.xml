@@ -33,13 +33,13 @@
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.IndoorNavigation20"
+        android:theme="@style/Theme.Wherezit"
         tools:targetApi="31">
 
         <activity
             android:name=".presentation.MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.IndoorNavigation20">
+            android:theme="@style/Theme.Wherezit">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
